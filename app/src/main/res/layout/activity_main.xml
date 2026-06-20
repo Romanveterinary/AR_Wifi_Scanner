@@ -4,8 +4,9 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <FrameLayout
-        android:id="@+id/camera_container"
+    <fragment
+        android:id="@+id/ar_fragment"
+        android:name="com.google.ar.sceneform.ux.ArFragment"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
@@ -35,7 +36,7 @@
             android:layout_marginStart="8dp"
             android:text="Bluetooth"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#2196F3" />
+            android:backgroundTint="#555555" />
     </LinearLayout>
 
 </FrameLayout>
