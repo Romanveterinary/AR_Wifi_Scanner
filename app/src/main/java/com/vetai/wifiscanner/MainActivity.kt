@@ -3,6 +3,7 @@ package com.vetai.wifiscanner
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.Toast
@@ -22,10 +23,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnWifi: Button
     private lateinit var btnBluetooth: Button
     private var isWifiMode = true 
-    private lateinit var wifiScanner: WifiSignalScanner
-    private val PERMISSION_REQUEST_CODE = 123
 
-    // Змінна для нашої AR-камери
+    private lateinit var wifiScanner: WifiSignalScanner
+    private lateinit var bluetoothScanner: BluetoothSignalScanner // Додано новий сканер
+    
+    private val PERMISSION_REQUEST_CODE = 123
     private lateinit var arFragment: ArFragment
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -34,17 +36,20 @@ class MainActivity : AppCompatActivity() {
 
         btnWifi = findViewById(R.id.btn_wifi)
         btnBluetooth = findViewById(R.id.btn_bluetooth)
-        
-        // Знаходимо AR-фрагмент
         arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
 
+        // Ініціалізація обох сканерів
         wifiScanner = WifiSignalScanner(this)
+        bluetoothScanner = BluetoothSignalScanner(this)
 
-        // Слухаємо дані від сканера і малюємо крапки
-        wifiScanner.onSignalFound = { bssid, ssid, rssi, color ->
-            runOnUiThread {
-                drawSignalInAR(rssi, color)
-            }
+        // Слухаємо дані від Wi-Fi
+        wifiScanner.onSignalFound = { _, _, rssi, color ->
+            runOnUiThread { drawSignalInAR(rssi, color) }
+        }
+
+        // Слухаємо дані від Bluetooth (працює набагато швидше)
+        bluetoothScanner.onSignalFound = { _, _, rssi, color ->
+            runOnUiThread { drawSignalInAR(rssi, color) }
         }
 
         btnWifi.setOnClickListener {
@@ -64,33 +69,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Функція малювання кольорових плям (сфер) у просторі
     private fun drawSignalInAR(rssi: Int, colorInt: Int) {
         val frame = arFragment.arSceneView.arFrame ?: return
         val cameraPose = frame.camera.pose
 
-        // Визначаємо щільність крапок залежно від сили сигналу (RSSI зазвичай від -30 до -90)
+        // Робимо ефект "рою": чим сильніший сигнал, тим густіша хмара (до 10 крапок за раз)
         val dotsToDraw = when {
-            rssi > -50 -> 5 // Дуже сильний сигнал — щільна хмара
-            rssi > -70 -> 3 // Середній сигнал
-            else -> 1       // Слабкий сигнал — поодинокі крапки
+            rssi > -60 -> 10 // Сильний сигнал (близько) — щільний рій
+            rssi > -80 -> 4  // Середній сигнал
+            else -> 1        // Слабкий сигнал — поодинокі крапки
         }
 
-        // Створюємо 3D-матеріал з нашим унікальним кольором
         val arColor = com.google.ar.sceneform.rendering.Color(colorInt)
         MaterialFactory.makeOpaqueWithColor(this, arColor)
             .thenAccept { material ->
-                // Малюємо задану кількість крапок
                 for (i in 0 until dotsToDraw) {
-                    // Створюємо сферу радіусом 5 см
-                    val sphereRenderable = ShapeFactory.makeSphere(0.05f, Vector3.zero(), material)
+                    val sphereRenderable = ShapeFactory.makeSphere(0.03f, Vector3.zero(), material) // Трохи зменшили розмір крапок
 
-                    // Розкидаємо їх трохи хаотично на відстані 1 метр перед камерою
-                    val offsetX = Random.nextFloat() * 0.5f - 0.25f // Відхилення по X
-                    val offsetY = Random.nextFloat() * 0.5f - 0.25f // Відхилення по Y
+                    // Розкидаємо їх у радіусі 1 метра (ширший рій)
+                    val offsetX = Random.nextFloat() * 1.0f - 0.5f 
+                    val offsetY = Random.nextFloat() * 1.0f - 0.5f 
                     
-                    // Обчислюємо позицію в просторі (1 метр вперед по осі Z)
-                    val forward = floatArrayOf(offsetX, offsetY, -1f)
+                    val forward = floatArrayOf(offsetX, offsetY, -1.5f) // Малюємо на 1.5м перед нами
                     val transformed = FloatArray(3)
                     cameraPose.rotateVector(forward, 0, transformed, 0)
                     val pos = cameraPose.translation
@@ -101,7 +101,6 @@ class MainActivity : AppCompatActivity() {
                         pos[2] + transformed[2]
                     )
 
-                    // Прив'язуємо об'єкт до простору
                     val anchor = arFragment.arSceneView.session?.createAnchor(anchorPose)
                     anchor?.let {
                         val anchorNode = AnchorNode(it)
@@ -117,23 +116,28 @@ class MainActivity : AppCompatActivity() {
         if (isWifiMode) {
             btnWifi.setBackgroundColor(Color.parseColor("#4CAF50"))
             btnBluetooth.setBackgroundColor(Color.parseColor("#555555"))
-            wifiScanner.startScanning()
+            bluetoothScanner.stopScanning() // Зупиняємо BT
+            wifiScanner.startScanning()     // Запускаємо Wi-Fi
         } else {
             btnWifi.setBackgroundColor(Color.parseColor("#555555"))
             btnBluetooth.setBackgroundColor(Color.parseColor("#2196F3"))
-            wifiScanner.stopScanning()
+            wifiScanner.stopScanning()        // Зупиняємо Wi-Fi
+            bluetoothScanner.startScanning()  // Запускаємо BT
         }
     }
 
     private fun startCurrentScanner() {
         if (isWifiMode) {
             wifiScanner.startScanning()
+        } else {
+            bluetoothScanner.startScanning()
         }
     }
 
     override fun onPause() {
         super.onPause()
         wifiScanner.stopScanning()
+        bluetoothScanner.stopScanning()
     }
 
     override fun onResume() {
@@ -143,22 +147,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Оновлена перевірка дозволів з урахуванням сучасних вимог Bluetooth
     private fun checkPermissions(): Boolean {
         val locationPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val cameraPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        return locationPerm && cameraPerm
+        val btScanPerm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+        } else true
+        return locationPerm && cameraPerm && btScanPerm
     }
 
     private fun requestPermissions() {
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.CAMERA
-            ),
-            PERMISSION_REQUEST_CODE
+        val perms = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.CAMERA
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            perms.add(Manifest.permission.BLUETOOTH_SCAN)
+            perms.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        ActivityCompat.requestPermissions(this, perms.toTypedArray(), PERMISSION_REQUEST_CODE)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -166,7 +175,7 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == PERMISSION_REQUEST_CODE && grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             startCurrentScanner()
         } else {
-            Toast.makeText(this, "Для роботи AR потрібні камера та локація!", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Надайте всі дозволи для роботи сканера!", Toast.LENGTH_LONG).show()
         }
     }
 }
