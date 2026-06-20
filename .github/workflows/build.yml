@@ -1,26 +1,2 @@
-name: Build Android APK
-
-on:
-  push:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-
-    - name: Generate Wrapper
-      run: gradle wrapper
-
-    - name: List Tasks
-      run: ./gradlew tasks
+- name: Find APK
+      run: find . -name "*.apk"
