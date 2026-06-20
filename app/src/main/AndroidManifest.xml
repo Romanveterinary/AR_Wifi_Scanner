@@ -12,7 +12,7 @@
     <application
         android:allowBackup="true"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
 
         <meta-data android:name="com.google.ar.core" android:value="required" />
 
@@ -25,6 +25,6 @@
             </intent-filter>
         </activity>
 
-            </application>
+    </application>
 
 </manifest>
