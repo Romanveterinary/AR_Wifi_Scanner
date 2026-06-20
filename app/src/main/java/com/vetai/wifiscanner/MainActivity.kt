@@ -18,6 +18,12 @@ import com.google.ar.sceneform.rendering.ShapeFactory
 import com.google.ar.sceneform.ux.ArFragment
 import kotlin.random.Random
 
+// Клас для запам'ятовування "рекорду" сигналу та його AR-крапок
+data class SignalRecord(
+    var bestRssi: Int,
+    val arNodes: MutableList<AnchorNode> = mutableListOf()
+)
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var btnWifi: Button
@@ -25,10 +31,13 @@ class MainActivity : AppCompatActivity() {
     private var isWifiMode = true 
 
     private lateinit var wifiScanner: WifiSignalScanner
-    private lateinit var bluetoothScanner: BluetoothSignalScanner // Додано новий сканер
+    private lateinit var bluetoothScanner: BluetoothSignalScanner
     
     private val PERMISSION_REQUEST_CODE = 123
     private lateinit var arFragment: ArFragment
+
+    // База даних поточних AR-об'єктів (Ключ - MAC-адреса)
+    private val signalRecords = mutableMapOf<String, SignalRecord>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,18 +47,16 @@ class MainActivity : AppCompatActivity() {
         btnBluetooth = findViewById(R.id.btn_bluetooth)
         arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
 
-        // Ініціалізація обох сканерів
         wifiScanner = WifiSignalScanner(this)
         bluetoothScanner = BluetoothSignalScanner(this)
 
-        // Слухаємо дані від Wi-Fi
-        wifiScanner.onSignalFound = { _, _, rssi, color ->
-            runOnUiThread { drawSignalInAR(rssi, color) }
+        // Тепер ми передаємо MAC-адресу (mac) в нашу функцію малювання
+        wifiScanner.onSignalFound = { mac, _, rssi, color ->
+            runOnUiThread { updateSignalInAR(mac, rssi, color) }
         }
 
-        // Слухаємо дані від Bluetooth (працює набагато швидше)
-        bluetoothScanner.onSignalFound = { _, _, rssi, color ->
-            runOnUiThread { drawSignalInAR(rssi, color) }
+        bluetoothScanner.onSignalFound = { mac, _, rssi, color ->
+            runOnUiThread { updateSignalInAR(mac, rssi, color) }
         }
 
         btnWifi.setOnClickListener {
@@ -69,60 +76,98 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun drawSignalInAR(rssi: Int, colorInt: Int) {
+    private fun updateSignalInAR(mac: String, rssi: Int, colorInt: Int) {
         val frame = arFragment.arSceneView.arFrame ?: return
-        val cameraPose = frame.camera.pose
+        
+        // Знаходимо старий запис або створюємо новий з мінімальним початковим рекордом
+        val record = signalRecords[mac] ?: SignalRecord(-100).also { signalRecords[mac] = it }
 
-        // Робимо ефект "рою": чим сильніший сигнал, тим густіша хмара (до 10 крапок за раз)
-        val dotsToDraw = when {
-            rssi > -60 -> 10 // Сильний сигнал (близько) — щільний рій
-            rssi > -80 -> 4  // Середній сигнал
-            else -> 1        // Слабкий сигнал — поодинокі крапки
-        }
+        // Оновлюємо пляму ТІЛЬКИ якщо ми підійшли ближче (сигнал сильніший за попередній)
+        if (rssi > record.bestRssi) {
+            record.bestRssi = rssi
 
-        val arColor = com.google.ar.sceneform.rendering.Color(colorInt)
-        MaterialFactory.makeOpaqueWithColor(this, arColor)
-            .thenAccept { material ->
-                for (i in 0 until dotsToDraw) {
-                    val sphereRenderable = ShapeFactory.makeSphere(0.03f, Vector3.zero(), material) // Трохи зменшили розмір крапок
+            // 1. Стираємо старі крапки з простору
+            for (node in record.arNodes) {
+                node.renderable = null
+                node.anchor?.detach()
+                node.setParent(null)
+            }
+            record.arNodes.clear()
 
-                    // Розкидаємо їх у радіусі 1 метра (ширший рій)
-                    val offsetX = Random.nextFloat() * 1.0f - 0.5f 
-                    val offsetY = Random.nextFloat() * 1.0f - 0.5f 
-                    
-                    val forward = floatArrayOf(offsetX, offsetY, -1.5f) // Малюємо на 1.5м перед нами
-                    val transformed = FloatArray(3)
-                    cameraPose.rotateVector(forward, 0, transformed, 0)
-                    val pos = cameraPose.translation
-                    
-                    val anchorPose = Pose.makeTranslation(
-                        pos[0] + transformed[0], 
-                        pos[1] + transformed[1], 
-                        pos[2] + transformed[2]
-                    )
+            // 2. Визначаємо щільність нової плями (чим ближче, тим більший "вибух" крапок)
+            val dotsToDraw = when {
+                rssi > -45 -> 30 // Впритул до джерела — величезна пляма
+                rssi > -60 -> 15 // Близько
+                rssi > -80 -> 5  // Середня відстань
+                else -> 1        // Далеко
+            }
 
-                    val anchor = arFragment.arSceneView.session?.createAnchor(anchorPose)
-                    anchor?.let {
-                        val anchorNode = AnchorNode(it)
-                        anchorNode.renderable = sphereRenderable
-                        anchorNode.setParent(arFragment.arSceneView.scene)
+            val cameraPose = frame.camera.pose
+            val arColor = com.google.ar.sceneform.rendering.Color(colorInt)
+
+            // 3. Малюємо нову пляму прямо навколо нашої поточної позиції
+            MaterialFactory.makeOpaqueWithColor(this, arColor)
+                .thenAccept { material ->
+                    for (i in 0 until dotsToDraw) {
+                        val sphere = ShapeFactory.makeSphere(0.04f, Vector3.zero(), material)
+
+                        // Розкидаємо крапки хаотично навколо нас
+                        val offsetX = Random.nextFloat() * 0.8f - 0.4f 
+                        val offsetY = Random.nextFloat() * 0.8f - 0.4f 
+                        val offsetZ = Random.nextFloat() * 0.8f - 0.4f - 0.5f // Приблизно 0.5м перед камерою
+
+                        val forward = floatArrayOf(offsetX, offsetY, offsetZ)
+                        val transformed = FloatArray(3)
+                        cameraPose.rotateVector(forward, 0, transformed, 0)
+                        val pos = cameraPose.translation
+                        
+                        val anchorPose = Pose.makeTranslation(
+                            pos[0] + transformed[0], 
+                            pos[1] + transformed[1], 
+                            pos[2] + transformed[2]
+                        )
+
+                        val anchor = arFragment.arSceneView.session?.createAnchor(anchorPose)
+                        anchor?.let {
+                            val anchorNode = AnchorNode(it)
+                            anchorNode.renderable = sphere
+                            anchorNode.setParent(arFragment.arSceneView.scene)
+                            
+                            // Запам'ятовуємо об'єкт, щоб стерти його при наступному кроці вперед
+                            record.arNodes.add(anchorNode)
+                        }
                     }
                 }
+        }
+    }
+
+    // Функція повного очищення AR-сцени
+    private fun clearARScene() {
+        for (record in signalRecords.values) {
+            for (node in record.arNodes) {
+                node.renderable = null
+                node.anchor?.detach()
+                node.setParent(null)
             }
+        }
+        signalRecords.clear()
     }
 
     private fun setMode(wifi: Boolean) {
+        // Очищаємо простір при перемиканні режиму
+        clearARScene()
+
         isWifiMode = wifi
         if (isWifiMode) {
             btnWifi.setBackgroundColor(Color.parseColor("#4CAF50"))
             btnBluetooth.setBackgroundColor(Color.parseColor("#555555"))
-            bluetoothScanner.stopScanning() // Зупиняємо BT
-            wifiScanner.startScanning()     // Запускаємо Wi-Fi
+            bluetoothScanner.stopScanning()
+            wifiScanner.startScanning()
         } else {
             btnWifi.setBackgroundColor(Color.parseColor("#555555"))
             btnBluetooth.setBackgroundColor(Color.parseColor("#2196F3"))
-            wifiScanner.stopScanning()        // Зупиняємо Wi-Fi
-            bluetoothScanner.startScanning()  // Запускаємо BT
+            wifiScanner.stopScanning()
+            bluetoothScanner.startScanning()
         }
     }
 
@@ -147,7 +192,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Оновлена перевірка дозволів з урахуванням сучасних вимог Bluetooth
     private fun checkPermissions(): Boolean {
         val locationPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val cameraPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
