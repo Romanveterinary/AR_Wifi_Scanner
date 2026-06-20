@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AR Scanner</string>
+    <string name="scanning_text">Сканування ефіру...\nШукаю сигнали</string>
+</resources>
