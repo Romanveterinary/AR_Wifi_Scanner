@@ -23,6 +23,7 @@ import com.google.ar.sceneform.rendering.MaterialFactory
 import com.google.ar.sceneform.rendering.ShapeFactory
 import com.google.ar.sceneform.rendering.ViewRenderable
 import com.google.ar.sceneform.ux.ArFragment
+import kotlin.math.sqrt
 
 data class SignalRecord(
     var currentNode: AnchorNode? = null,
@@ -41,10 +42,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnCloseMenu: Button
     private lateinit var deviceListContainer: LinearLayout
     
+    // Нові елементи для шкали
+    private lateinit var tvProgressText: TextView
+    private lateinit var scanProgressBar: ProgressBar
+    
     private var isWifiMode = true 
-
-    // Змінна для утримання конкретної цілі (Режим Снайпера)
     private var targetMacAddress: String? = null
+
+    // Математика сканування
+    private var scanProgress = 0
+    private var lastRecordedPos: Vector3? = null
 
     private lateinit var wifiScanner: WifiSignalScanner
     private lateinit var bluetoothScanner: BluetoothSignalScanner
@@ -78,6 +85,10 @@ class MainActivity : AppCompatActivity() {
             menuPanel = findViewById(R.id.menu_panel)
             btnCloseMenu = findViewById(R.id.btn_close_menu)
             deviceListContainer = findViewById(R.id.device_list_container)
+            
+            // Прив'язка шкали
+            tvProgressText = findViewById(R.id.tv_progress_text)
+            scanProgressBar = findViewById(R.id.scan_progress_bar)
             
             arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
 
@@ -127,6 +138,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             resetUiTimer()
+            updateProgressUi() // Встановлюємо стартовий текст
 
         } catch (e: Exception) {
             AlertDialog.Builder(this)
@@ -148,6 +160,22 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString(mac, newName).apply()
     }
 
+    // Оновлення тексту і повзунка
+    private fun updateProgressUi() {
+        scanProgressBar.progress = scanProgress
+        
+        if (targetMacAddress == null) {
+            tvProgressText.text = "Режим радара (Виберіть ціль у Налаштуваннях)"
+            scanProgressBar.progress = 0
+        } else {
+            when {
+                scanProgress < 80 -> tvProgressText.text = "🚶 Збираю дані... Пройдено: $scanProgress%"
+                scanProgress < 100 -> tvProgressText.text = "🔎 Слід знайдено! Проявлення: $scanProgress%"
+                else -> tvProgressText.text = "🎯 Ціль локалізована (100%)!"
+            }
+        }
+    }
+
     private fun openSettingsMenu() {
         uiHandler.removeCallbacks(hideUiRunnable)
         topControls.visibility = View.VISIBLE
@@ -156,7 +184,6 @@ class MainActivity : AppCompatActivity() {
         
         deviceListContainer.removeAllViews()
 
-        // Кнопка скасування режиму пошуку (якщо він активний)
         if (targetMacAddress != null) {
             val resetBtn = Button(this).apply {
                 text = "❌ Скасувати режим пошуку (Показувати всі)"
@@ -173,6 +200,10 @@ class MainActivity : AppCompatActivity() {
 
                 setOnClickListener {
                     targetMacAddress = null
+                    scanProgress = 0
+                    lastRecordedPos = null
+                    updateProgressUi()
+                    
                     openSettingsMenu()
                     Toast.makeText(this@MainActivity, "Режим радара (Всі сигнали)", Toast.LENGTH_SHORT).show()
                 }
@@ -182,15 +213,11 @@ class MainActivity : AppCompatActivity() {
 
         addMenuHeader("🌐 Wi-Fi Пристрої:")
         if (wifiRecords.isEmpty()) addMenuEmptyText("Поки нічого не знайдено...")
-        wifiRecords.forEach { (mac, record) ->
-            addMenuItem(mac, record.lastRssi, true)
-        }
+        wifiRecords.forEach { (mac, record) -> addMenuItem(mac, record.lastRssi, true) }
 
         addMenuHeader("\n🔵 Bluetooth Пристрої:")
         if (bluetoothRecords.isEmpty()) addMenuEmptyText("Поки нічого не знайдено...")
-        bluetoothRecords.forEach { (mac, record) ->
-            addMenuItem(mac, record.lastRssi, false)
-        }
+        bluetoothRecords.forEach { (mac, record) -> addMenuItem(mac, record.lastRssi, false) }
     }
 
     private fun addMenuHeader(title: String) {
@@ -215,8 +242,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun addMenuItem(mac: String, rssi: Int, isWifi: Boolean) {
         val displayName = getDeviceCustomName(mac)
-        
-        // Виділяємо кольором, якщо це наша активна ціль
         val isTarget = (mac == targetMacAddress)
         val bgColor = if (isTarget) "#4CAF50" else "#333333"
         
@@ -234,17 +259,13 @@ class MainActivity : AppCompatActivity() {
             params.setMargins(0, 0, 0, 8)
             layoutParams = params
 
-            setOnClickListener {
-                showActionDialog(mac, displayName)
-            }
+            setOnClickListener { showActionDialog(mac, displayName) }
         }
         deviceListContainer.addView(button)
     }
 
-    // Нове вікно дій для пристрою
     private fun showActionDialog(mac: String, currentName: String) {
         val options = arrayOf("🎯 Почати пошук цього пристрою", "✏️ Перейменувати")
-        
         AlertDialog.Builder(this)
             .setTitle(currentName)
             .setItems(options) { _, which ->
@@ -259,8 +280,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun startSniperMode(mac: String, name: String) {
         targetMacAddress = mac
+        scanProgress = 0
+        lastRecordedPos = null
+        updateProgressUi()
         
-        // Очищаємо екран від усіх інших кульок
         val allRecords = wifiRecords.values + bluetoothRecords.values
         allRecords.forEach { record ->
             record.currentNode?.let { node ->
@@ -273,7 +296,7 @@ class MainActivity : AppCompatActivity() {
         
         menuPanel.visibility = View.GONE
         resetUiTimer()
-        Toast.makeText(this, "Пошук цілі: $name", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Крокуйте по кімнаті для збору даних!", Toast.LENGTH_LONG).show()
     }
 
     private fun showRenameDialog(mac: String, currentName: String) {
@@ -321,10 +344,41 @@ class MainActivity : AppCompatActivity() {
 
         if (isWifiSignal != isWifiMode) return
         
-        // ЖОРСТКА ІЗОЛЯЦІЯ: Якщо ми шукаємо конкретну ціль, ігноруємо всі інші MAC-адреси
-        if (targetMacAddress != null && targetMacAddress != mac) return
-
         val frame = arFragment.arSceneView.arFrame ?: return
+        val posArray = frame.camera.pose.translation
+        val currentCamPos = Vector3(posArray[0], posArray[1], posArray[2])
+
+        // ЛОГІКА РЕЖИМУ СНАЙПЕРА ТА ШКАЛИ ПРОГРЕСУ
+        if (targetMacAddress != null) {
+            if (targetMacAddress != mac) return 
+            
+            var shouldUpdateProgress = false
+            
+            if (lastRecordedPos == null) {
+                shouldUpdateProgress = true
+            } else {
+                val dx = currentCamPos.x - lastRecordedPos!!.x
+                val dy = currentCamPos.y - lastRecordedPos!!.y
+                val dz = currentCamPos.z - lastRecordedPos!!.z
+                val distanceWalked = sqrt((dx*dx + dy*dy + dz*dz).toDouble()).toFloat()
+                
+                // Якщо користувач пройшов 60 сантиметрів - зараховуємо точку
+                if (distanceWalked > 0.6f) {
+                    shouldUpdateProgress = true
+                }
+            }
+
+            if (shouldUpdateProgress && scanProgress < 100) {
+                scanProgress += 10
+                lastRecordedPos = currentCamPos
+                updateProgressUi()
+            }
+
+            // Блокування видимості, якщо прогрес менший за 80%
+            if (scanProgress < 80) {
+                return 
+            }
+        }
 
         record.currentNode?.let { node ->
             node.renderable = null
@@ -343,7 +397,6 @@ class MainActivity : AppCompatActivity() {
         val arColor = com.google.ar.sceneform.rendering.Color(colorInt)
         val deviceName = getDeviceCustomName(mac)
 
-        // АСИНХРОННИЙ РЕНДЕРИНГ МАТЕРІАЛУ І ТЕКСТУ
         MaterialFactory.makeOpaqueWithColor(this, arColor)
             .thenAccept { material ->
                 ViewRenderable.builder()
@@ -351,7 +404,6 @@ class MainActivity : AppCompatActivity() {
                     .build()
                     .thenAccept { viewRenderable ->
                         
-                        // Заповнюємо текст таблички
                         val textView = viewRenderable.view.findViewById<TextView>(R.id.tv_ar_label)
                         textView.text = "$deviceName\nСигнал: $rssi"
 
@@ -360,12 +412,11 @@ class MainActivity : AppCompatActivity() {
                         val forward = floatArrayOf(0f, 0f, -0.5f)
                         val transformed = FloatArray(3)
                         cameraPose.rotateVector(forward, 0, transformed, 0)
-                        val pos = cameraPose.translation
                         
                         val anchorPose = Pose.makeTranslation(
-                            pos[0] + transformed[0], 
-                            pos[1] + transformed[1], 
-                            pos[2] + transformed[2]
+                            posArray[0] + transformed[0], 
+                            posArray[1] + transformed[1], 
+                            posArray[2] + transformed[2]
                         )
 
                         val anchor = arFragment.arSceneView.session?.createAnchor(anchorPose)
@@ -373,12 +424,10 @@ class MainActivity : AppCompatActivity() {
                             val anchorNode = AnchorNode(it)
                             anchorNode.setParent(arFragment.arSceneView.scene)
 
-                            // 1. Вузол для кольорової кульки
                             val sphereNode = Node()
                             sphereNode.setParent(anchorNode)
                             sphereNode.renderable = sphere
 
-                            // 2. Вузол для таблички з текстом (висить трохи вище за кульку)
                             val labelNode = Node()
                             labelNode.setParent(anchorNode)
                             labelNode.renderable = viewRenderable
@@ -392,7 +441,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun setMode(wifi: Boolean) {
         isWifiMode = wifi
-        targetMacAddress = null // Скидаємо ціль при перемиканні режиму
+        targetMacAddress = null 
+        scanProgress = 0
+        lastRecordedPos = null
+        updateProgressUi()
         
         val inactiveRecords = if (wifi) bluetoothRecords else wifiRecords
         inactiveRecords.values.forEach { record ->
