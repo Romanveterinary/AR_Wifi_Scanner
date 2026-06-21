@@ -11,6 +11,19 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <TextView
+        android:id="@+id/direction_arrow"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="⬆️"
+        android:textSize="100sp"
+        android:visibility="gone"
+        android:shadowColor="#000000"
+        android:shadowDx="2"
+        android:shadowDy="2"
+        android:shadowRadius="10" />
+
     <RelativeLayout
         android:id="@+id/top_controls"
         android:layout_width="match_parent"
@@ -52,7 +65,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="8dp"
-            android:text="Знайдені пристрої (Натисніть, щоб перейменувати):"
+            android:text="Знайдені пристрої:"
             android:textColor="#FFFFFF"
             android:textSize="16sp"
             android:textStyle="bold" />
@@ -92,7 +105,7 @@
             android:id="@+id/tv_progress_text"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Прогрес сканування кімнати: 0%"
+            android:text="Прогрес сканування: 0%"
             android:textColor="#FFFFFF"
             android:textAlignment="center"
             android:textStyle="bold"
