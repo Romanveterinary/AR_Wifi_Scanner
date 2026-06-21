@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -55,7 +56,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // ПАСТКА ДЛЯ ПОМИЛОК: Якщо щось піде не так, ми побачимо це на екрані телефону
         try {
             setContentView(R.layout.activity_main)
 
@@ -100,12 +100,6 @@ class MainActivity : AppCompatActivity() {
                 resetUiTimer()
             }
 
-            // БЕЗПЕЧНИЙ дотик до екрану: чіпляємось за view фрагмента, а не за 3D-сцену
-            arFragment.view?.setOnTouchListener { _, _ ->
-                showUi()
-                false 
-            }
-
             if (checkPermissions()) {
                 startCurrentScanner()
             } else {
@@ -115,7 +109,6 @@ class MainActivity : AppCompatActivity() {
             resetUiTimer()
 
         } catch (e: Exception) {
-            // Якщо програма падає, вона покаже це вікно
             AlertDialog.Builder(this)
                 .setTitle("Критична помилка запуску")
                 .setMessage(e.stackTraceToString())
@@ -125,10 +118,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ГОЛОВНИЙ ПЕРЕХОПЛЮВАЧ ДОТИКІВ: працює за будь-яких умов
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        showUi() // Показуємо кнопки при кожному дотику до екрану
+        return super.dispatchTouchEvent(ev)
+    }
+
     private fun showUi() {
-        topControls.visibility = View.VISIBLE
-        bottomControls.visibility = View.VISIBLE
-        resetUiTimer()
+        // Робимо елементи видимими, якщо вони були приховані
+        if (topControls.visibility != View.VISIBLE) {
+            topControls.visibility = View.VISIBLE
+            bottomControls.visibility = View.VISIBLE
+        }
+        resetUiTimer() // Скидаємо 5-секундний таймер
     }
 
     private fun resetUiTimer() {
