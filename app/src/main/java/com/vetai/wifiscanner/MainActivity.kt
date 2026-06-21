@@ -53,7 +53,6 @@ class MainActivity : AppCompatActivity() {
     private var scanProgress = 0
     private var lastRecordedPos: Vector3? = null
 
-    // Буфер для математичного згладжування радіосигналу (фільтр від перешкод)
     private val rssiBuffers = mutableMapOf<String, MutableList<Int>>()
 
     private lateinit var wifiScanner: WifiSignalScanner
@@ -133,10 +132,16 @@ class MainActivity : AppCompatActivity() {
                 resetUiTimer()
             }
 
-            // ГОЛОВНИЙ ТАЙМЕР КАМЕРИ: Рухає шкалу від кроків незалежно від радіосигналу
-            arFragment.arSceneView.scene.addOnUpdateListener { _ ->
-                trackUserMovementIndependent()
-            }
+            // ВИПРАВЛЕННЯ КРАШУ: Даємо рушію 500мс на завантаження, перш ніж чіпляти слухача
+            uiHandler.postDelayed({
+                try {
+                    arFragment.arSceneView?.scene?.addOnUpdateListener { _ ->
+                        trackUserMovementIndependent()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }, 500)
 
             if (checkPermissions()) {
                 startCurrentScanner()
@@ -157,11 +162,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Незалежний прорахунок відстані через AR-камеру
     private fun trackUserMovementIndependent() {
         if (targetMacAddress == null || scanProgress >= 100) return
         
-        val frame = arFragment.arSceneView.arFrame ?: return
+        // БЕЗПЕЧНИЙ ВИКЛИК (?): Якщо камера ще не готова, просто ігноруємо
+        val frame = arFragment.arSceneView?.arFrame ?: return
         if (frame.camera.trackingState != com.google.ar.core.TrackingState.TRACKING) return
         
         val posArray = frame.camera.pose.translation
@@ -175,7 +180,6 @@ class MainActivity : AppCompatActivity() {
             val dz = currentCamPos.z - lastRecordedPos!!.z
             val distanceWalked = sqrt((dx*dx + dy*dy + dz*dz).toDouble()).toFloat()
             
-            // Якщо пройшли 60 см - плавно додаємо прогрес
             if (distanceWalked > 0.6f) {
                 scanProgress += 10
                 lastRecordedPos = currentCamPos
@@ -382,20 +386,19 @@ class MainActivity : AppCompatActivity() {
         val record = records[mac] ?: SignalRecord().also { records[mac] = it }
         record.lastRssi = rssi
 
-        // МАТЕМАТИЧНЕ ЗГЛАДЖУВАННЯ (Ковзне середнє по 3 пакетах)
         val buffer = rssiBuffers[mac] ?: mutableListOf<Int>().also { rssiBuffers[mac] = it }
         buffer.add(rssi)
         if (buffer.size > 3) buffer.removeAt(0)
         val smoothedRssi = buffer.average().toInt()
 
-        val frame = arFragment.arSceneView.arFrame ?: return
+        // БЕЗПЕЧНИЙ ВИКЛИК (?): Захист від падіння
+        val frame = arFragment.arSceneView?.arFrame ?: return
         val posArray = frame.camera.pose.translation
         val isTarget = (targetMacAddress == mac)
 
         if (targetMacAddress != null && !isTarget) return
         if (record.isLockedAt100) return
 
-        // Співставляємо тепер згладжений сигнал з попереднім піком
         if (smoothedRssi >= record.maxRssi || record.currentNode == null) {
             record.maxRssi = smoothedRssi
 
@@ -444,10 +447,11 @@ class MainActivity : AppCompatActivity() {
                                 posArray[2] + transformed[2]
                             )
 
-                            val anchor = arFragment.arSceneView.session?.createAnchor(anchorPose)
+                            // БЕЗПЕЧНИЙ ВИКЛИК (?): Захист від падіння
+                            val anchor = arFragment.arSceneView?.session?.createAnchor(anchorPose)
                             anchor?.let {
                                 val anchorNode = AnchorNode(it)
-                                anchorNode.setParent(arFragment.arSceneView.scene)
+                                anchorNode.setParent(arFragment.arSceneView?.scene)
 
                                 val sphereNode = Node()
                                 sphereNode.setParent(anchorNode)
