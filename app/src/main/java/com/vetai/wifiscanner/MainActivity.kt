@@ -26,7 +26,6 @@ import com.google.ar.sceneform.ux.ArFragment
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-// Перейменовано на MainSignalRecord для уникнення конфліктів у пакеті
 data class MainSignalRecord(
     var currentNode: AnchorNode? = null,
     var lastRssi: Int = -100,
@@ -153,8 +152,8 @@ class MainActivity : AppCompatActivity() {
 
             uiHandler.postDelayed({
                 try {
-                    arFragment.arSceneView?.planeRenderer?.isEnabled = false
-                    arFragment.arSceneView?.scene?.pointCloudNode?.isEnabled = false
+                    // ВИПРАВЛЕНО: Залишено лише безпечне приховування сітки. pointCloudNode видалено.
+                    arFragment.arSceneView?.planeRenderer?.isVisible = false
                     
                     arFragment.arSceneView?.scene?.addOnUpdateListener { _ ->
                         trackUserMovementIndependent()
