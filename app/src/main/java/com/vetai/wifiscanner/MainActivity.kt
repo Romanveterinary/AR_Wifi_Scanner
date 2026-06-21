@@ -73,7 +73,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ЖОРСТКА ПАЛІТРА КОЛЬОРІВ (Щоб 100% відрізнялися)
     private val colorPalette = arrayOf(
         Color.RED,
         Color.GREEN,
@@ -81,8 +80,8 @@ class MainActivity : AppCompatActivity() {
         Color.YELLOW,
         Color.CYAN,
         Color.MAGENTA,
-        Color.parseColor("#FF9800"), // Помаранчевий
-        Color.parseColor("#9C27B0")  // Фіолетовий
+        Color.parseColor("#FF9800"), 
+        Color.parseColor("#9C27B0")  
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -125,13 +124,13 @@ class MainActivity : AppCompatActivity() {
 
             btnWifi.setOnClickListener {
                 setMode(wifi = true)
-                Toast.makeText(this, "Режим Wi-Fi", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Режим Wi-Fi (Кубики)", Toast.LENGTH_SHORT).show()
                 resetUiTimer()
             }
 
             btnBluetooth.setOnClickListener {
                 setMode(wifi = false)
-                Toast.makeText(this, "Режим Bluetooth", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Режим Bluetooth (Кульки)", Toast.LENGTH_SHORT).show()
                 resetUiTimer()
             }
 
@@ -153,6 +152,9 @@ class MainActivity : AppCompatActivity() {
 
             uiHandler.postDelayed({
                 try {
+                    arFragment.arSceneView?.planeRenderer?.isEnabled = false
+                    arFragment.arSceneView?.scene?.pointCloudNode?.isEnabled = false
+                    
                     arFragment.arSceneView?.scene?.addOnUpdateListener { _ ->
                         trackUserMovementIndependent()
                     }
@@ -228,7 +230,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             when {
                 scanProgress < 100 -> tvProgressText.text = "🚶 Збираю дані кімнати... Пройдено: $scanProgress%"
-                else -> tvProgressText.text = "🎯 ЦІЛЬ ЛОКАЛІЗОВАНО! (Підійдіть до бульки)"
+                else -> tvProgressText.text = "🎯 ЦІЛЬ ЛОКАЛІЗОВАНО! (Підійдіть до фігури)"
             }
         }
     }
@@ -434,7 +436,7 @@ class MainActivity : AppCompatActivity() {
                 node.setParent(null)
             }
 
-            val sphereRadius = when {
+            val baseSize = when {
                 smoothedRssi > -40 -> 0.25f  
                 smoothedRssi > -60 -> 0.12f  
                 smoothedRssi > -80 -> 0.05f  
@@ -458,7 +460,6 @@ class MainActivity : AppCompatActivity() {
                             
                             val textView = viewRenderable.view.findViewById<TextView>(R.id.tv_ar_label)
                             
-                            // ПОВЕРНУЛИ СТАРУ СТАБІЛЬНУ ЛОГІКУ: Тільки текст над булькою
                             if (isTarget && scanProgress >= 100) {
                                 textView.text = "🎯 ЦІЛЬ ТУТ\n($deviceName)"
                                 textView.setTextColor(Color.YELLOW)
@@ -467,7 +468,15 @@ class MainActivity : AppCompatActivity() {
                                 textView.text = "$deviceName\nПік: $smoothedRssi"
                             }
 
-                            val sphere = ShapeFactory.makeSphere(sphereRadius, Vector3.zero(), material)
+                            // РОЗПОДІЛ ФІГУР: Кубик для Wi-Fi, Кулька для Bluetooth
+                            val shapeNode = Node()
+                            if (isWifiSignal) {
+                                val cubeSize = Vector3(baseSize * 1.5f, baseSize * 1.5f, baseSize * 1.5f)
+                                shapeNode.renderable = ShapeFactory.makeCube(cubeSize, Vector3.zero(), material)
+                            } else {
+                                shapeNode.renderable = ShapeFactory.makeSphere(baseSize, Vector3.zero(), material)
+                            }
+
                             val forward = floatArrayOf(0f, 0f, -0.5f)
                             val transformed = FloatArray(3)
                             cameraPose.rotateVector(forward, 0, transformed, 0)
@@ -483,14 +492,12 @@ class MainActivity : AppCompatActivity() {
                                 val anchorNode = AnchorNode(it)
                                 anchorNode.setParent(arFragment.arSceneView?.scene)
 
-                                val sphereNode = Node()
-                                sphereNode.setParent(anchorNode)
-                                sphereNode.renderable = sphere
+                                shapeNode.setParent(anchorNode)
 
                                 val labelNode = Node()
                                 labelNode.setParent(anchorNode)
                                 labelNode.renderable = viewRenderable
-                                labelNode.localPosition = Vector3(0f, sphereRadius + 0.15f, 0f)
+                                labelNode.localPosition = Vector3(0f, baseSize + 0.15f, 0f)
 
                                 record.currentNode = anchorNode
                             }
