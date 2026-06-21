@@ -23,6 +23,7 @@ import com.google.ar.sceneform.rendering.MaterialFactory
 import com.google.ar.sceneform.rendering.ShapeFactory
 import com.google.ar.sceneform.rendering.ViewRenderable
 import com.google.ar.sceneform.ux.ArFragment
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 data class SignalRecord(
@@ -46,7 +47,6 @@ class MainActivity : AppCompatActivity() {
     
     private lateinit var tvProgressText: TextView
     private lateinit var scanProgressBar: ProgressBar
-    private lateinit var directionArrow: TextView // Нова стрілка компаса
     
     private var isWifiMode = true 
     private var targetMacAddress: String? = null
@@ -73,6 +73,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ЖОРСТКА ПАЛІТРА КОЛЬОРІВ (Щоб 100% відрізнялися)
+    private val colorPalette = arrayOf(
+        Color.RED,
+        Color.GREEN,
+        Color.BLUE,
+        Color.YELLOW,
+        Color.CYAN,
+        Color.MAGENTA,
+        Color.parseColor("#FF9800"), // Помаранчевий
+        Color.parseColor("#9C27B0")  // Фіолетовий
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -91,7 +103,6 @@ class MainActivity : AppCompatActivity() {
             
             tvProgressText = findViewById(R.id.tv_progress_text)
             scanProgressBar = findViewById(R.id.scan_progress_bar)
-            directionArrow = findViewById(R.id.direction_arrow)
             
             arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
 
@@ -100,14 +111,14 @@ class MainActivity : AppCompatActivity() {
 
             wifiScanner.onSignalFound = { mac, _, rssi, _ ->
                 runOnUiThread { 
-                    val uniqueColor = generateColorFromMac(mac)
+                    val uniqueColor = getColorForMac(mac)
                     updateSignalInAR(mac, rssi, uniqueColor, isWifiSignal = true) 
                 }
             }
 
             bluetoothScanner.onSignalFound = { mac, _, rssi, _ ->
                 runOnUiThread { 
-                    val uniqueColor = generateColorFromMac(mac)
+                    val uniqueColor = getColorForMac(mac)
                     updateSignalInAR(mac, rssi, uniqueColor, isWifiSignal = false) 
                 }
             }
@@ -169,13 +180,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun generateColorFromMac(mac: String): Int {
-        val hue = (mac.hashCode().toDouble() % 360 + 360) % 360
-        return Color.HSVToColor(floatArrayOf(hue.toFloat(), 0.9f, 0.9f))
+    private fun getColorForMac(mac: String): Int {
+        val index = abs(mac.hashCode()) % colorPalette.size
+        return colorPalette[index]
     }
 
     private fun trackUserMovementIndependent() {
-        if (targetMacAddress == null) return
+        if (targetMacAddress == null || scanProgress >= 100) return
         
         val frame = arFragment.arSceneView?.arFrame ?: return
         if (frame.camera.trackingState != com.google.ar.core.TrackingState.TRACKING) return
@@ -183,63 +194,19 @@ class MainActivity : AppCompatActivity() {
         val cameraPose = frame.camera.pose
         val currentCamPos = Vector3(cameraPose.translation[0], cameraPose.translation[1], cameraPose.translation[2])
         
-        // Логіка накопичення шкали
-        if (scanProgress < 100) {
-            if (lastRecordedPos == null) {
-                lastRecordedPos = currentCamPos
-            } else {
-                val dx = currentCamPos.x - lastRecordedPos!!.x
-                val dy = currentCamPos.y - lastRecordedPos!!.y
-                val dz = currentCamPos.z - lastRecordedPos!!.z
-                val distanceWalked = sqrt((dx*dx + dy*dy + dz*dz).toDouble()).toFloat()
-                
-                if (distanceWalked > 0.6f) {
-                    scanProgress += 10
-                    lastRecordedPos = currentCamPos
-                    runOnUiThread { updateProgressUi() }
-                }
-            }
-        }
-
-        // ЛОГІКА КОМПАСА (Працює тільки коли досягнуто 100%)
-        if (scanProgress >= 100) {
-            val records = if (isWifiMode) wifiRecords else bluetoothRecords
-            val targetNode = records[targetMacAddress]?.currentNode
-            
-            if (targetNode != null) {
-                val targetPos = targetNode.worldPosition
-                val targetVector = floatArrayOf(targetPos.x, targetPos.y, targetPos.z, 1f)
-                
-                // Переводимо координати цілі відносно камери
-                val cameraInverse = cameraPose.inverse()
-                val localTarget = FloatArray(4)
-                cameraInverse.transformPoint(targetVector, 0, localTarget, 0)
-                
-                val dx = localTarget[0] // Ліворуч/Праворуч
-                val dz = localTarget[2] // Вперед/Назад (в ARCore негативний Z - це попереду)
-                
-                val dyRadar = -dz
-                // Вираховуємо кут повороту екрану
-                val angleDeg = Math.toDegrees(Math.atan2(dx.toDouble(), dyRadar.toDouble())).toFloat()
-                
-                // Вираховуємо дистанцію
-                val dist = sqrt((dx*dx + dz*dz).toDouble())
-
-                runOnUiThread {
-                    directionArrow.visibility = View.VISIBLE
-                    if (dist < 0.8) {
-                        directionArrow.text = "🎯"
-                        directionArrow.rotation = 0f
-                        tvProgressText.text = "ВИ НА МІСЦІ!"
-                    } else {
-                        directionArrow.text = "⬆️"
-                        directionArrow.rotation = angleDeg
-                        tvProgressText.text = "ЙДІТЬ ЗА СТРІЛКОЮ!"
-                    }
-                }
-            }
+        if (lastRecordedPos == null) {
+            lastRecordedPos = currentCamPos
         } else {
-            runOnUiThread { directionArrow.visibility = View.GONE }
+            val dx = currentCamPos.x - lastRecordedPos!!.x
+            val dy = currentCamPos.y - lastRecordedPos!!.y
+            val dz = currentCamPos.z - lastRecordedPos!!.z
+            val distanceWalked = sqrt((dx*dx + dy*dy + dz*dz).toDouble()).toFloat()
+            
+            if (distanceWalked > 0.6f) {
+                scanProgress += 10
+                lastRecordedPos = currentCamPos
+                runOnUiThread { updateProgressUi() }
+            }
         }
     }
 
@@ -258,10 +225,10 @@ class MainActivity : AppCompatActivity() {
         if (targetMacAddress == null) {
             tvProgressText.text = "Режим радара (Всі сигнали)"
             scanProgressBar.progress = 0
-            directionArrow.visibility = View.GONE
         } else {
-            if (scanProgress < 100) {
-                tvProgressText.text = "🚶 Збираю дані кімнати... Пройдено: $scanProgress%"
+            when {
+                scanProgress < 100 -> tvProgressText.text = "🚶 Збираю дані кімнати... Пройдено: $scanProgress%"
+                else -> tvProgressText.text = "🎯 ЦІЛЬ ЛОКАЛІЗОВАНО! (Підійдіть до бульки)"
             }
         }
     }
@@ -299,7 +266,7 @@ class MainActivity : AppCompatActivity() {
                     
                     updateProgressUi()
                     openSettingsMenu()
-                    Toast.makeText(this@MainActivity, "Режим радара (Всі сигнали)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "Режим радара", Toast.LENGTH_SHORT).show()
                 }
             }
             deviceListContainer.addView(resetBtn)
@@ -337,7 +304,7 @@ class MainActivity : AppCompatActivity() {
     private fun addMenuItem(mac: String, rssi: Int, isWifi: Boolean) {
         val displayName = getDeviceCustomName(mac)
         val isTarget = (mac == targetMacAddress)
-        val uniqueColor = generateColorFromMac(mac)
+        val uniqueColor = getColorForMac(mac)
         
         val button = Button(this).apply {
             text = if (isTarget) "🎯 $displayName (Ост: $rssi)" else "$displayName (Ост: $rssi)"
@@ -383,7 +350,6 @@ class MainActivity : AppCompatActivity() {
         lastRecordedPos = null
         rssiBuffers.clear()
         updateProgressUi()
-        directionArrow.visibility = View.GONE
         
         val allRecords = wifiRecords.values + bluetoothRecords.values
         allRecords.forEach { record ->
@@ -399,7 +365,7 @@ class MainActivity : AppCompatActivity() {
         
         menuPanel.visibility = View.GONE
         resetUiTimer()
-        Toast.makeText(this, "Крокуйте по кімнаті для калібрування!", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Крокуйте по кімнаті для пошуку!", Toast.LENGTH_LONG).show()
     }
 
     private fun showRenameDialog(mac: String, currentName: String) {
@@ -452,8 +418,6 @@ class MainActivity : AppCompatActivity() {
         if (buffer.size > 3) buffer.removeAt(0)
         val smoothedRssi = buffer.average().toInt()
 
-        if (targetMacAddress == null && isWifiSignal && smoothedRssi < -70) return
-
         val frame = arFragment.arSceneView?.arFrame ?: return
         val posArray = frame.camera.pose.translation
         val isTarget = (targetMacAddress == mac)
@@ -480,7 +444,6 @@ class MainActivity : AppCompatActivity() {
             val cameraPose = frame.camera.pose
             val deviceName = getDeviceCustomName(mac)
             
-            // ВИПРАВЛЕННЯ КОЛЬОРУ SCENEFORM: Розбираємо Android Color на RGB канали для матеріалу
             val r = Color.red(androidColorInt) / 255f
             val g = Color.green(androidColorInt) / 255f
             val b = Color.blue(androidColorInt) / 255f
@@ -495,8 +458,9 @@ class MainActivity : AppCompatActivity() {
                             
                             val textView = viewRenderable.view.findViewById<TextView>(R.id.tv_ar_label)
                             
+                            // ПОВЕРНУЛИ СТАРУ СТАБІЛЬНУ ЛОГІКУ: Тільки текст над булькою
                             if (isTarget && scanProgress >= 100) {
-                                textView.text = "ЦІЛЬ ТУТ ⬆\n($deviceName)"
+                                textView.text = "🎯 ЦІЛЬ ТУТ\n($deviceName)"
                                 textView.setTextColor(Color.YELLOW)
                                 record.isLockedAt100 = true 
                             } else {
@@ -542,7 +506,6 @@ class MainActivity : AppCompatActivity() {
         lastRecordedPos = null
         rssiBuffers.clear()
         updateProgressUi()
-        directionArrow.visibility = View.GONE
         
         val inactiveRecords = if (wifi) bluetoothRecords else wifiRecords
         inactiveRecords.values.forEach { record ->

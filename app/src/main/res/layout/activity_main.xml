@@ -11,19 +11,6 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <TextView
-        android:id="@+id/direction_arrow"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:text="⬆️"
-        android:textSize="100sp"
-        android:visibility="gone"
-        android:shadowColor="#000000"
-        android:shadowDx="2"
-        android:shadowDy="2"
-        android:shadowRadius="10" />
-
     <RelativeLayout
         android:id="@+id/top_controls"
         android:layout_width="match_parent"
