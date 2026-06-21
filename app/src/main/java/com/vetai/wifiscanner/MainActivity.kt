@@ -1,6 +1,7 @@
 package com.vetai.wifiscanner
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -45,7 +46,6 @@ class MainActivity : AppCompatActivity() {
     private val wifiRecords = mutableMapOf<String, SignalRecord>()
     private val bluetoothRecords = mutableMapOf<String, SignalRecord>()
 
-    // Таймер для приховування інтерфейсу (5 секунд)
     private val uiHandler = Handler(Looper.getMainLooper())
     private val hideUiRunnable = Runnable {
         topControls.visibility = View.GONE
@@ -54,69 +54,77 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        // Прив'язка всіх кнопок і панелей
-        btnWifi = findViewById(R.id.btn_wifi)
-        btnBluetooth = findViewById(R.id.btn_bluetooth)
-        btnExit = findViewById(R.id.btn_exit)
-        btnSettings = findViewById(R.id.btn_settings)
-        topControls = findViewById(R.id.top_controls)
-        bottomControls = findViewById(R.id.bottom_controls)
         
-        arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
+        // ПАСТКА ДЛЯ ПОМИЛОК: Якщо щось піде не так, ми побачимо це на екрані телефону
+        try {
+            setContentView(R.layout.activity_main)
 
-        wifiScanner = WifiSignalScanner(this)
-        bluetoothScanner = BluetoothSignalScanner(this)
+            btnWifi = findViewById(R.id.btn_wifi)
+            btnBluetooth = findViewById(R.id.btn_bluetooth)
+            btnExit = findViewById(R.id.btn_exit)
+            btnSettings = findViewById(R.id.btn_settings)
+            topControls = findViewById(R.id.top_controls)
+            bottomControls = findViewById(R.id.bottom_controls)
+            
+            arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
 
-        wifiScanner.onSignalFound = { mac, _, rssi, color ->
-            runOnUiThread { updateSignalInAR(mac, rssi, color, isWifiSignal = true) }
-        }
+            wifiScanner = WifiSignalScanner(this)
+            bluetoothScanner = BluetoothSignalScanner(this)
 
-        bluetoothScanner.onSignalFound = { mac, _, rssi, color ->
-            runOnUiThread { updateSignalInAR(mac, rssi, color, isWifiSignal = false) }
-        }
+            wifiScanner.onSignalFound = { mac, _, rssi, color ->
+                runOnUiThread { updateSignalInAR(mac, rssi, color, isWifiSignal = true) }
+            }
 
-        btnWifi.setOnClickListener {
-            setMode(wifi = true)
-            Toast.makeText(this, "Режим Wi-Fi", Toast.LENGTH_SHORT).show()
+            bluetoothScanner.onSignalFound = { mac, _, rssi, color ->
+                runOnUiThread { updateSignalInAR(mac, rssi, color, isWifiSignal = false) }
+            }
+
+            btnWifi.setOnClickListener {
+                setMode(wifi = true)
+                Toast.makeText(this, "Режим Wi-Fi", Toast.LENGTH_SHORT).show()
+                resetUiTimer()
+            }
+
+            btnBluetooth.setOnClickListener {
+                setMode(wifi = false)
+                Toast.makeText(this, "Режим Bluetooth", Toast.LENGTH_SHORT).show()
+                resetUiTimer()
+            }
+
+            btnExit.setOnClickListener {
+                finish()
+            }
+
+            btnSettings.setOnClickListener {
+                Toast.makeText(this, "Меню в розробці...", Toast.LENGTH_SHORT).show()
+                resetUiTimer()
+            }
+
+            // БЕЗПЕЧНИЙ дотик до екрану: чіпляємось за view фрагмента, а не за 3D-сцену
+            arFragment.view?.setOnTouchListener { _, _ ->
+                showUi()
+                false 
+            }
+
+            if (checkPermissions()) {
+                startCurrentScanner()
+            } else {
+                requestPermissions()
+            }
+
             resetUiTimer()
-        }
 
-        btnBluetooth.setOnClickListener {
-            setMode(wifi = false)
-            Toast.makeText(this, "Режим Bluetooth", Toast.LENGTH_SHORT).show()
-            resetUiTimer()
+        } catch (e: Exception) {
+            // Якщо програма падає, вона покаже це вікно
+            AlertDialog.Builder(this)
+                .setTitle("Критична помилка запуску")
+                .setMessage(e.stackTraceToString())
+                .setPositiveButton("Закрити") { _, _ -> finish() }
+                .setCancelable(false)
+                .show()
         }
-
-        // Кнопка Виходу з програми
-        btnExit.setOnClickListener {
-            finish()
-        }
-
-        // Кнопка Налаштувань (Поки що пустушка)
-        btnSettings.setOnClickListener {
-            Toast.makeText(this, "Меню в розробці...", Toast.LENGTH_SHORT).show()
-            resetUiTimer()
-        }
-
-        // Слухаємо дотики до екрану, щоб повернути кнопки
-        arFragment.arSceneView.scene.setOnTouchListener { _, _ ->
-            showUi()
-            false 
-        }
-
-        if (checkPermissions()) {
-            startCurrentScanner()
-        } else {
-            requestPermissions()
-        }
-
-        // Запускаємо таймер одразу при старті
-        resetUiTimer()
     }
 
-    // Функції для таймера і видимості
     private fun showUi() {
         topControls.visibility = View.VISIBLE
         bottomControls.visibility = View.VISIBLE
@@ -125,11 +133,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun resetUiTimer() {
         uiHandler.removeCallbacks(hideUiRunnable)
-        uiHandler.postDelayed(hideUiRunnable, 5000) // 5000 мілісекунд = 5 секунд
+        uiHandler.postDelayed(hideUiRunnable, 5000)
     }
 
     private fun updateSignalInAR(mac: String, rssi: Int, colorInt: Int, isWifiSignal: Boolean) {
-        // Жорстке відсікання фонових сигналів
         if (isWifiSignal != isWifiMode) return
 
         val frame = arFragment.arSceneView.arFrame ?: return
@@ -181,7 +188,6 @@ class MainActivity : AppCompatActivity() {
     private fun setMode(wifi: Boolean) {
         isWifiMode = wifi
         
-        // Жорстке відсікання: вимикаємо фізичну видимість куль іншого режиму
         wifiRecords.values.forEach { record ->
             record.currentNode?.isEnabled = isWifiMode 
         }
@@ -212,7 +218,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        uiHandler.removeCallbacks(hideUiRunnable) // Зупиняємо таймер, щоб не було витоку пам'яті
+        uiHandler.removeCallbacks(hideUiRunnable)
         wifiScanner.stopScanning()
         bluetoothScanner.stopScanning()
     }
@@ -251,7 +257,7 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == PERMISSION_REQUEST_CODE && grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             startCurrentScanner()
         } else {
-            Toast.makeText(this, "Надайте всі дозволи для роботи сканера!", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Надайте дозволи!", Toast.LENGTH_LONG).show()
         }
     }
 }
