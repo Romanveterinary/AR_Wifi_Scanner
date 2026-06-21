@@ -2,6 +2,7 @@ package com.vetai.wifiscanner
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -10,10 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.RelativeLayout
-import android.widget.Toast
+import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -25,7 +23,8 @@ import com.google.ar.sceneform.rendering.ShapeFactory
 import com.google.ar.sceneform.ux.ArFragment
 
 data class SignalRecord(
-    var currentNode: AnchorNode? = null
+    var currentNode: AnchorNode? = null,
+    var lastRssi: Int = -100
 )
 
 class MainActivity : AppCompatActivity() {
@@ -36,6 +35,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSettings: Button
     private lateinit var topControls: RelativeLayout
     private lateinit var bottomControls: LinearLayout
+    private lateinit var menuPanel: LinearLayout
+    private lateinit var btnCloseMenu: Button
+    private lateinit var deviceListContainer: LinearLayout
+    
     private var isWifiMode = true 
 
     private lateinit var wifiScanner: WifiSignalScanner
@@ -49,8 +52,11 @@ class MainActivity : AppCompatActivity() {
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private val hideUiRunnable = Runnable {
-        topControls.visibility = View.GONE
-        bottomControls.visibility = View.GONE
+        // Ховаємо інтерфейс тільки якщо меню налаштувань закрите
+        if (menuPanel.visibility != View.VISIBLE) {
+            topControls.visibility = View.GONE
+            bottomControls.visibility = View.GONE
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,6 +71,9 @@ class MainActivity : AppCompatActivity() {
             btnSettings = findViewById(R.id.btn_settings)
             topControls = findViewById(R.id.top_controls)
             bottomControls = findViewById(R.id.bottom_controls)
+            menuPanel = findViewById(R.id.menu_panel)
+            btnCloseMenu = findViewById(R.id.btn_close_menu)
+            deviceListContainer = findViewById(R.id.device_list_container)
             
             arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
 
@@ -91,12 +100,16 @@ class MainActivity : AppCompatActivity() {
                 resetUiTimer()
             }
 
-            btnExit.setOnClickListener {
-                finish()
+            btnExit.setOnClickListener { finish() }
+
+            // Логіка відкриття меню налаштувань
+            btnSettings.setOnClickListener {
+                openSettingsMenu()
             }
 
-            btnSettings.setOnClickListener {
-                Toast.makeText(this, "Меню в розробці...", Toast.LENGTH_SHORT).show()
+            // Логіка закриття меню налаштувань
+            btnCloseMenu.setOnClickListener {
+                menuPanel.visibility = View.GONE
                 resetUiTimer()
             }
 
@@ -118,19 +131,119 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ГОЛОВНИЙ ПЕРЕХОПЛЮВАЧ ДОТИКІВ: працює за будь-яких умов
-    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
-        showUi() // Показуємо кнопки при кожному дотику до екрану
-        return super.dispatchTouchEvent(ev)
+    // --- ЛОГІКА МЕНЮ ТА ЛОКАЛЬНОЇ БАЗИ НАЗВ ---
+    
+    private fun getDeviceCustomName(mac: String): String {
+        val prefs = getSharedPreferences("SavedDeviceNames", Context.MODE_PRIVATE)
+        return prefs.getString(mac, mac) ?: mac // Якщо імені немає, показуємо MAC-адрес
     }
 
-    private fun showUi() {
-        // Робимо елементи видимими, якщо вони були приховані
-        if (topControls.visibility != View.VISIBLE) {
-            topControls.visibility = View.VISIBLE
-            bottomControls.visibility = View.VISIBLE
+    private fun saveDeviceCustomName(mac: String, newName: String) {
+        val prefs = getSharedPreferences("SavedDeviceNames", Context.MODE_PRIVATE)
+        prefs.edit().putString(mac, newName).apply()
+    }
+
+    private fun openSettingsMenu() {
+        uiHandler.removeCallbacks(hideUiRunnable) // Зупиняємо таймер зникнення UI
+        topControls.visibility = View.VISIBLE
+        bottomControls.visibility = View.VISIBLE
+        menuPanel.visibility = View.VISIBLE
+        
+        deviceListContainer.removeAllViews()
+
+        // Створюємо заголовок Wi-Fi
+        addMenuHeader("🌐 Wi-Fi Пристрої:")
+        if (wifiRecords.isEmpty()) addMenuEmptyText("Поки нічого не знайдено...")
+        wifiRecords.forEach { (mac, record) ->
+            addMenuItem(mac, record.lastRssi, true)
         }
-        resetUiTimer() // Скидаємо 5-секундний таймер
+
+        // Створюємо заголовок Bluetooth
+        addMenuHeader("\n🔵 Bluetooth Пристрої:")
+        if (bluetoothRecords.isEmpty()) addMenuEmptyText("Поки нічого не знайдено...")
+        bluetoothRecords.forEach { (mac, record) ->
+            addMenuItem(mac, record.lastRssi, false)
+        }
+    }
+
+    private fun addMenuHeader(title: String) {
+        val tv = TextView(this).apply {
+            text = title
+            setTextColor(Color.parseColor("#4CAF50"))
+            textSize = 16f
+            setPadding(0, 16, 0, 8)
+        }
+        deviceListContainer.addView(tv)
+    }
+
+    private fun addMenuEmptyText(text: String) {
+        val tv = TextView(this).apply {
+            this.text = text
+            setTextColor(Color.GRAY)
+            textSize = 14f
+            setPadding(16, 0, 0, 8)
+        }
+        deviceListContainer.addView(tv)
+    }
+
+    private fun addMenuItem(mac: String, rssi: Int, isWifi: Boolean) {
+        val displayName = getDeviceCustomName(mac)
+        
+        val button = Button(this).apply {
+            text = "$displayName (Сигнал: $rssi)"
+            isAllCaps = false
+            setBackgroundColor(Color.parseColor("#333333"))
+            setTextColor(Color.WHITE)
+            setPadding(16, 16, 16, 16)
+            
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            params.setMargins(0, 0, 0, 8)
+            layoutParams = params
+
+            setOnClickListener {
+                showRenameDialog(mac, displayName)
+            }
+        }
+        deviceListContainer.addView(button)
+    }
+
+    private fun showRenameDialog(mac: String, currentName: String) {
+        val input = EditText(this).apply {
+            setText(if (currentName == mac) "" else currentName)
+            hint = "Введіть нову назву (напр. Мій Роутер)"
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Перейменувати пристрій")
+            .setMessage("MAC: $mac")
+            .setView(input)
+            .setPositiveButton("Зберегти") { _, _ ->
+                val newName = input.text.toString().trim()
+                if (newName.isNotEmpty()) {
+                    saveDeviceCustomName(mac, newName)
+                    openSettingsMenu() // Оновлюємо список
+                    Toast.makeText(this, "Збережено!", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Скасувати", null)
+            .show()
+    }
+    
+    // ------------------------------------------
+
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        // Показуємо UI тільки якщо меню не відкрите на весь екран
+        if (menuPanel.visibility != View.VISIBLE) {
+            if (topControls.visibility != View.VISIBLE) {
+                topControls.visibility = View.VISIBLE
+                bottomControls.visibility = View.VISIBLE
+            }
+            resetUiTimer()
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     private fun resetUiTimer() {
@@ -139,11 +252,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateSignalInAR(mac: String, rssi: Int, colorInt: Int, isWifiSignal: Boolean) {
+        val records = if (isWifiSignal) wifiRecords else bluetoothRecords
+        
+        // Зберігаємо запис про сигнал навіть якщо режим прихований (для списку меню)
+        val record = records[mac] ?: SignalRecord().also { records[mac] = it }
+        record.lastRssi = rssi
+
+        // Якщо режим не співпадає, просто зберігаємо дані в базу, але не малюємо в AR
         if (isWifiSignal != isWifiMode) return
 
         val frame = arFragment.arSceneView.arFrame ?: return
-        val records = if (isWifiSignal) wifiRecords else bluetoothRecords
-        val record = records[mac] ?: SignalRecord().also { records[mac] = it }
 
         record.currentNode?.let { node ->
             node.renderable = null
@@ -190,11 +308,15 @@ class MainActivity : AppCompatActivity() {
     private fun setMode(wifi: Boolean) {
         isWifiMode = wifi
         
-        wifiRecords.values.forEach { record ->
-            record.currentNode?.isEnabled = isWifiMode 
-        }
-        bluetoothRecords.values.forEach { record ->
-            record.currentNode?.isEnabled = !isWifiMode 
+        // ЖОРСТКЕ СТИРАННЯ КУЛЬОК ІНШОГО РЕЖИМУ (Виправляємо хаос)
+        val inactiveRecords = if (wifi) bluetoothRecords else wifiRecords
+        inactiveRecords.values.forEach { record ->
+            record.currentNode?.let { node ->
+                node.renderable = null
+                node.anchor?.detach()
+                node.setParent(null)
+            }
+            record.currentNode = null
         }
 
         if (isWifiMode) {

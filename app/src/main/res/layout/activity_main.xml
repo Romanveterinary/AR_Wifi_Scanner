@@ -43,7 +43,7 @@
         android:layout_marginTop="80dp"
         android:layout_marginBottom="80dp"
         android:layout_marginHorizontal="20dp"
-        android:background="#CC000000"
+        android:background="#E6000000"
         android:orientation="vertical"
         android:padding="16dp"
         android:visibility="gone">
@@ -51,10 +51,10 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:text="Виберіть пристрої для відображення:"
+            android:layout_marginBottom="8dp"
+            android:text="Знайдені пристрої (Натисніть, щоб перейменувати):"
             android:textColor="#FFFFFF"
-            android:textSize="18sp"
+            android:textSize="16sp"
             android:textStyle="bold" />
 
         <ScrollView
@@ -75,7 +75,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:backgroundTint="#4CAF50"
-            android:text="Закрити та Шукати"
+            android:text="Зберегти та Закрити"
             android:textColor="#FFFFFF" />
     </LinearLayout>
 
@@ -84,29 +84,56 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:orientation="horizontal"
-        android:padding="16dp"
-        android:weightSum="2">
+        android:orientation="vertical"
+        android:background="#80000000"
+        android:padding="16dp">
 
-        <Button
-            android:id="@+id/btn_wifi"
-            android:layout_width="0dp"
+        <TextView
+            android:id="@+id/tv_progress_text"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:text="Wi-Fi"
+            android:text="Прогрес сканування кімнати: 0%"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#4CAF50" />
+            android:textAlignment="center"
+            android:textStyle="bold"
+            android:layout_marginBottom="4dp"/>
 
-        <Button
-            android:id="@+id/btn_bluetooth"
-            android:layout_width="0dp"
+        <ProgressBar
+            android:id="@+id/scan_progress_bar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="20dp"
+            android:max="100"
+            android:progress="0"
+            android:progressTint="#4CAF50"
+            android:layout_marginBottom="12dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:text="Bluetooth"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#555555" />
+            android:orientation="horizontal"
+            android:weightSum="2">
+
+            <Button
+                android:id="@+id/btn_wifi"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:text="Wi-Fi"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#4CAF50" />
+
+            <Button
+                android:id="@+id/btn_bluetooth"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="Bluetooth"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#555555" />
+        </LinearLayout>
     </LinearLayout>
 
 </FrameLayout>
