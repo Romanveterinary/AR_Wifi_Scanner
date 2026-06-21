@@ -25,9 +25,12 @@ import com.google.ar.sceneform.rendering.ViewRenderable
 import com.google.ar.sceneform.ux.ArFragment
 import kotlin.math.sqrt
 
+// Додано maxRssi для "Peak Hold" та isLockedAt100 для фіксації стрілки
 data class SignalRecord(
     var currentNode: AnchorNode? = null,
-    var lastRssi: Int = -100
+    var lastRssi: Int = -100,
+    var maxRssi: Int = -100,
+    var isLockedAt100: Boolean = false 
 )
 
 class MainActivity : AppCompatActivity() {
@@ -42,14 +45,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnCloseMenu: Button
     private lateinit var deviceListContainer: LinearLayout
     
-    // Нові елементи для шкали
     private lateinit var tvProgressText: TextView
     private lateinit var scanProgressBar: ProgressBar
     
     private var isWifiMode = true 
     private var targetMacAddress: String? = null
 
-    // Математика сканування
     private var scanProgress = 0
     private var lastRecordedPos: Vector3? = null
 
@@ -86,7 +87,6 @@ class MainActivity : AppCompatActivity() {
             btnCloseMenu = findViewById(R.id.btn_close_menu)
             deviceListContainer = findViewById(R.id.device_list_container)
             
-            // Прив'язка шкали
             tvProgressText = findViewById(R.id.tv_progress_text)
             scanProgressBar = findViewById(R.id.scan_progress_bar)
             
@@ -138,7 +138,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             resetUiTimer()
-            updateProgressUi() // Встановлюємо стартовий текст
+            updateProgressUi()
 
         } catch (e: Exception) {
             AlertDialog.Builder(this)
@@ -160,18 +160,16 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString(mac, newName).apply()
     }
 
-    // Оновлення тексту і повзунка
     private fun updateProgressUi() {
         scanProgressBar.progress = scanProgress
         
         if (targetMacAddress == null) {
-            tvProgressText.text = "Режим радара (Виберіть ціль у Налаштуваннях)"
+            tvProgressText.text = "Режим радара (Всі сигнали)"
             scanProgressBar.progress = 0
         } else {
             when {
-                scanProgress < 80 -> tvProgressText.text = "🚶 Збираю дані... Пройдено: $scanProgress%"
-                scanProgress < 100 -> tvProgressText.text = "🔎 Слід знайдено! Проявлення: $scanProgress%"
-                else -> tvProgressText.text = "🎯 Ціль локалізована (100%)!"
+                scanProgress < 100 -> tvProgressText.text = "🚶 Збираю дані... Пройдено: $scanProgress%"
+                else -> tvProgressText.text = "🎯 ЦІЛЬ ЗНАЙДЕНО! (Шукайте стрілку в кімнаті)"
             }
         }
     }
@@ -202,8 +200,12 @@ class MainActivity : AppCompatActivity() {
                     targetMacAddress = null
                     scanProgress = 0
                     lastRecordedPos = null
-                    updateProgressUi()
                     
+                    // Скидаємо блокування 100% для всіх записів
+                    wifiRecords.values.forEach { it.isLockedAt100 = false; it.maxRssi = -100 }
+                    bluetoothRecords.values.forEach { it.isLockedAt100 = false; it.maxRssi = -100 }
+                    
+                    updateProgressUi()
                     openSettingsMenu()
                     Toast.makeText(this@MainActivity, "Режим радара (Всі сигнали)", Toast.LENGTH_SHORT).show()
                 }
@@ -246,7 +248,7 @@ class MainActivity : AppCompatActivity() {
         val bgColor = if (isTarget) "#4CAF50" else "#333333"
         
         val button = Button(this).apply {
-            text = if (isTarget) "🎯 $displayName (Сигнал: $rssi)" else "$displayName (Сигнал: $rssi)"
+            text = if (isTarget) "🎯 $displayName (Ост: $rssi)" else "$displayName (Ост: $rssi)"
             isAllCaps = false
             setBackgroundColor(Color.parseColor(bgColor))
             setTextColor(Color.WHITE)
@@ -284,6 +286,7 @@ class MainActivity : AppCompatActivity() {
         lastRecordedPos = null
         updateProgressUi()
         
+        // Очищаємо екран
         val allRecords = wifiRecords.values + bluetoothRecords.values
         allRecords.forEach { record ->
             record.currentNode?.let { node ->
@@ -292,6 +295,8 @@ class MainActivity : AppCompatActivity() {
                 node.setParent(null)
             }
             record.currentNode = null
+            record.maxRssi = -100 // Скидаємо піки для нового пошуку
+            record.isLockedAt100 = false
         }
         
         menuPanel.visibility = View.GONE
@@ -338,22 +343,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateSignalInAR(mac: String, rssi: Int, colorInt: Int, isWifiSignal: Boolean) {
+        // ЖОРСТКА СЕПАРАЦІЯ: Якщо сигнал не відповідає активному режиму - ігноруємо його
+        if (isWifiSignal != isWifiMode) return
+
         val records = if (isWifiSignal) wifiRecords else bluetoothRecords
         val record = records[mac] ?: SignalRecord().also { records[mac] = it }
         record.lastRssi = rssi
 
-        if (isWifiSignal != isWifiMode) return
-        
         val frame = arFragment.arSceneView.arFrame ?: return
         val posArray = frame.camera.pose.translation
         val currentCamPos = Vector3(posArray[0], posArray[1], posArray[2])
+        val isTarget = (targetMacAddress == mac)
 
-        // ЛОГІКА РЕЖИМУ СНАЙПЕРА ТА ШКАЛИ ПРОГРЕСУ
-        if (targetMacAddress != null) {
-            if (targetMacAddress != mac) return 
-            
+        // Якщо режим Снайпера увімкнений, ігноруємо всі інші пристрої
+        if (targetMacAddress != null && !isTarget) return
+
+        // Логіка накопичення кроків тільки для нашої цілі
+        if (isTarget && !record.isLockedAt100) {
             var shouldUpdateProgress = false
-            
             if (lastRecordedPos == null) {
                 shouldUpdateProgress = true
             } else {
@@ -362,7 +369,6 @@ class MainActivity : AppCompatActivity() {
                 val dz = currentCamPos.z - lastRecordedPos!!.z
                 val distanceWalked = sqrt((dx*dx + dy*dy + dz*dz).toDouble()).toFloat()
                 
-                // Якщо користувач пройшов 60 сантиметрів - зараховуємо точку
                 if (distanceWalked > 0.6f) {
                     shouldUpdateProgress = true
                 }
@@ -373,70 +379,82 @@ class MainActivity : AppCompatActivity() {
                 lastRecordedPos = currentCamPos
                 updateProgressUi()
             }
+        }
 
-            // Блокування видимості, якщо прогрес менший за 80%
-            if (scanProgress < 80) {
-                return 
+        // Якщо ціль досягла 100%, вона заблокована і більше не рухається
+        if (record.isLockedAt100) return
+
+        // АЛГОРИТМ PEAK HOLD: Оновлюємо позицію ТІЛЬКИ якщо сигнал сильніший за попередній максимум
+        if (rssi >= record.maxRssi || record.currentNode == null) {
+            record.maxRssi = rssi
+
+            // Видаляємо стару табличку з поганої позиції
+            record.currentNode?.let { node ->
+                node.renderable = null
+                node.anchor?.detach()
+                node.setParent(null)
             }
-        }
 
-        record.currentNode?.let { node ->
-            node.renderable = null
-            node.anchor?.detach()
-            node.setParent(null)
-        }
+            val sphereRadius = when {
+                rssi > -40 -> 0.25f  
+                rssi > -60 -> 0.12f  
+                rssi > -80 -> 0.05f  
+                else -> 0.02f        
+            }
 
-        val sphereRadius = when {
-            rssi > -40 -> 0.25f  
-            rssi > -60 -> 0.12f  
-            rssi > -80 -> 0.05f  
-            else -> 0.02f        
-        }
+            val cameraPose = frame.camera.pose
+            val arColor = com.google.ar.sceneform.rendering.Color(colorInt)
+            val deviceName = getDeviceCustomName(mac)
 
-        val cameraPose = frame.camera.pose
-        val arColor = com.google.ar.sceneform.rendering.Color(colorInt)
-        val deviceName = getDeviceCustomName(mac)
+            MaterialFactory.makeOpaqueWithColor(this, arColor)
+                .thenAccept { material ->
+                    ViewRenderable.builder()
+                        .setView(this@MainActivity, R.layout.ar_label)
+                        .build()
+                        .thenAccept { viewRenderable ->
+                            
+                            val textView = viewRenderable.view.findViewById<TextView>(R.id.tv_ar_label)
+                            
+                            // Зміна тексту залежно від режиму та прогресу
+                            if (isTarget && scanProgress >= 100) {
+                                textView.text = "ЦІЛЬ ТУТ ⬆️\n($deviceName)"
+                                textView.setTextColor(Color.YELLOW)
+                                record.isLockedAt100 = true // Блокуємо табличку
+                            } else {
+                                textView.text = "$deviceName\nПік: $rssi"
+                            }
 
-        MaterialFactory.makeOpaqueWithColor(this, arColor)
-            .thenAccept { material ->
-                ViewRenderable.builder()
-                    .setView(this@MainActivity, R.layout.ar_label)
-                    .build()
-                    .thenAccept { viewRenderable ->
-                        
-                        val textView = viewRenderable.view.findViewById<TextView>(R.id.tv_ar_label)
-                        textView.text = "$deviceName\nСигнал: $rssi"
+                            val sphere = ShapeFactory.makeSphere(sphereRadius, Vector3.zero(), material)
 
-                        val sphere = ShapeFactory.makeSphere(sphereRadius, Vector3.zero(), material)
+                            val forward = floatArrayOf(0f, 0f, -0.5f)
+                            val transformed = FloatArray(3)
+                            cameraPose.rotateVector(forward, 0, transformed, 0)
+                            
+                            val anchorPose = Pose.makeTranslation(
+                                posArray[0] + transformed[0], 
+                                posArray[1] + transformed[1], 
+                                posArray[2] + transformed[2]
+                            )
 
-                        val forward = floatArrayOf(0f, 0f, -0.5f)
-                        val transformed = FloatArray(3)
-                        cameraPose.rotateVector(forward, 0, transformed, 0)
-                        
-                        val anchorPose = Pose.makeTranslation(
-                            posArray[0] + transformed[0], 
-                            posArray[1] + transformed[1], 
-                            posArray[2] + transformed[2]
-                        )
+                            val anchor = arFragment.arSceneView.session?.createAnchor(anchorPose)
+                            anchor?.let {
+                                val anchorNode = AnchorNode(it)
+                                anchorNode.setParent(arFragment.arSceneView.scene)
 
-                        val anchor = arFragment.arSceneView.session?.createAnchor(anchorPose)
-                        anchor?.let {
-                            val anchorNode = AnchorNode(it)
-                            anchorNode.setParent(arFragment.arSceneView.scene)
+                                val sphereNode = Node()
+                                sphereNode.setParent(anchorNode)
+                                sphereNode.renderable = sphere
 
-                            val sphereNode = Node()
-                            sphereNode.setParent(anchorNode)
-                            sphereNode.renderable = sphere
+                                val labelNode = Node()
+                                labelNode.setParent(anchorNode)
+                                labelNode.renderable = viewRenderable
+                                labelNode.localPosition = Vector3(0f, sphereRadius + 0.15f, 0f)
 
-                            val labelNode = Node()
-                            labelNode.setParent(anchorNode)
-                            labelNode.renderable = viewRenderable
-                            labelNode.localPosition = Vector3(0f, sphereRadius + 0.15f, 0f)
-
-                            record.currentNode = anchorNode
+                                record.currentNode = anchorNode
+                            }
                         }
-                    }
-            }
+                }
+        }
     }
 
     private fun setMode(wifi: Boolean) {
@@ -446,6 +464,7 @@ class MainActivity : AppCompatActivity() {
         lastRecordedPos = null
         updateProgressUi()
         
+        // При перемиканні режиму повністю стираємо всі кульки, щоб не було каші
         val inactiveRecords = if (wifi) bluetoothRecords else wifiRecords
         inactiveRecords.values.forEach { record ->
             record.currentNode?.let { node ->
@@ -454,6 +473,7 @@ class MainActivity : AppCompatActivity() {
                 node.setParent(null)
             }
             record.currentNode = null
+            record.isLockedAt100 = false
         }
 
         if (isWifiMode) {
