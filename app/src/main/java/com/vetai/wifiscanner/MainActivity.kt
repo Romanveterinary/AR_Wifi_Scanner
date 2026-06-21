@@ -35,8 +35,6 @@ data class MainSignalRecord(
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var btnWifi: Button
-    private lateinit var btnBluetooth: Button
     private lateinit var btnExit: Button
     private lateinit var btnSettings: Button
     private lateinit var topControls: RelativeLayout
@@ -48,21 +46,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvProgressText: TextView
     private lateinit var scanProgressBar: ProgressBar
     
-    private var isWifiMode = true 
     private var targetMacAddress: String? = null
-
     private var scanProgress = 0
     private var lastRecordedPos: Vector3? = null
 
     private val rssiBuffers = mutableMapOf<String, MutableList<Int>>()
-
-    private lateinit var wifiScanner: WifiSignalScanner
     private lateinit var bluetoothScanner: BluetoothSignalScanner
-    
     private val PERMISSION_REQUEST_CODE = 123
     private lateinit var arFragment: ArFragment
-
-    private val wifiRecords = mutableMapOf<String, MainSignalRecord>()
     private val bluetoothRecords = mutableMapOf<String, MainSignalRecord>()
 
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -74,14 +65,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val colorPalette = arrayOf(
-        Color.RED,
-        Color.GREEN,
-        Color.BLUE,
-        Color.YELLOW,
-        Color.CYAN,
-        Color.MAGENTA,
-        Color.parseColor("#FF9800"), 
-        Color.parseColor("#9C27B0")  
+        Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW,
+        Color.CYAN, Color.MAGENTA, Color.parseColor("#FF9800"), Color.parseColor("#9C27B0")  
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,8 +75,6 @@ class MainActivity : AppCompatActivity() {
         try {
             setContentView(R.layout.activity_main)
 
-            btnWifi = findViewById(R.id.btn_wifi)
-            btnBluetooth = findViewById(R.id.btn_bluetooth)
             btnExit = findViewById(R.id.btn_exit)
             btnSettings = findViewById(R.id.btn_settings)
             topControls = findViewById(R.id.top_controls)
@@ -104,34 +87,13 @@ class MainActivity : AppCompatActivity() {
             scanProgressBar = findViewById(R.id.scan_progress_bar)
             
             arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
-
-            wifiScanner = WifiSignalScanner(this)
             bluetoothScanner = BluetoothSignalScanner(this)
-
-            wifiScanner.onSignalFound = { mac, _, rssi, _ ->
-                runOnUiThread { 
-                    val uniqueColor = getColorForMac(mac)
-                    updateSignalInAR(mac, rssi, uniqueColor, isWifiSignal = true) 
-                }
-            }
 
             bluetoothScanner.onSignalFound = { mac, _, rssi, _ ->
                 runOnUiThread { 
                     val uniqueColor = getColorForMac(mac)
-                    updateSignalInAR(mac, rssi, uniqueColor, isWifiSignal = false) 
+                    updateSignalInAR(mac, rssi, uniqueColor) 
                 }
-            }
-
-            btnWifi.setOnClickListener {
-                setMode(wifi = true)
-                Toast.makeText(this, "Режим Wi-Fi (Кубики)", Toast.LENGTH_SHORT).show()
-                resetUiTimer()
-            }
-
-            btnBluetooth.setOnClickListener {
-                setMode(wifi = false)
-                Toast.makeText(this, "Режим Bluetooth (Кульки)", Toast.LENGTH_SHORT).show()
-                resetUiTimer()
             }
 
             btnExit.setOnClickListener { finish() }
@@ -152,9 +114,7 @@ class MainActivity : AppCompatActivity() {
 
             uiHandler.postDelayed({
                 try {
-                    // ВИПРАВЛЕНО: Залишено лише безпечне приховування сітки. pointCloudNode видалено.
                     arFragment.arSceneView?.planeRenderer?.isVisible = false
-                    
                     arFragment.arSceneView?.scene?.addOnUpdateListener { _ ->
                         trackUserMovementIndependent()
                     }
@@ -164,7 +124,7 @@ class MainActivity : AppCompatActivity() {
             }, 500)
 
             if (checkPermissions()) {
-                startCurrentScanner()
+                bluetoothScanner.startScanning()
             } else {
                 requestPermissions()
             }
@@ -229,8 +189,8 @@ class MainActivity : AppCompatActivity() {
             scanProgressBar.progress = 0
         } else {
             when {
-                scanProgress < 100 -> tvProgressText.text = "🚶 Збираю дані кімнати... Пройдено: $scanProgress%"
-                else -> tvProgressText.text = "🎯 ЦІЛЬ ЛОКАЛІЗОВАНО! (Підійдіть до фігури)"
+                scanProgress < 100 -> tvProgressText.text = "🚶 Збираю дані простору... Пройдено: $scanProgress%"
+                else -> tvProgressText.text = "🎯 ЦІЛЬ ЛОКАЛІЗОВАНО!"
             }
         }
     }
@@ -245,7 +205,7 @@ class MainActivity : AppCompatActivity() {
 
         if (targetMacAddress != null) {
             val resetBtn = Button(this).apply {
-                text = "❌ Скасувати режим пошуку (Показувати всі)"
+                text = "❌ Скасувати режим пошуку"
                 setBackgroundColor(Color.parseColor("#D32F2F"))
                 setTextColor(Color.WHITE)
                 setPadding(16, 16, 16, 16)
@@ -263,82 +223,69 @@ class MainActivity : AppCompatActivity() {
                     lastRecordedPos = null
                     rssiBuffers.clear()
                     
-                    wifiRecords.values.forEach { it.isLockedAt100 = false; it.maxRssi = -100 }
                     bluetoothRecords.values.forEach { it.isLockedAt100 = false; it.maxRssi = -100 }
-                    
                     updateProgressUi()
                     openSettingsMenu()
-                    Toast.makeText(this@MainActivity, "Режим радара", Toast.LENGTH_SHORT).show()
                 }
             }
             deviceListContainer.addView(resetBtn)
         }
 
-        addMenuHeader("🌐 Wi-Fi Пристрої:")
-        if (wifiRecords.isEmpty()) addMenuEmptyText("Поки нічого не знайдено...")
-        wifiRecords.forEach { (mac, record) -> addMenuItem(mac, record.lastRssi, true) }
-
-        addMenuHeader("\n🔵 Bluetooth Пристрої:")
-        if (bluetoothRecords.isEmpty()) addMenuEmptyText("Поки нічого не знайдено...")
-        bluetoothRecords.forEach { (mac, record) -> addMenuItem(mac, record.lastRssi, false) }
-    }
-
-    private fun addMenuHeader(title: String) {
         val tv = TextView(this).apply {
-            text = title
+            text = "🔵 Bluetooth Пристрої:"
             setTextColor(Color.parseColor("#4CAF50"))
             textSize = 16f
             setPadding(0, 16, 0, 8)
         }
         deviceListContainer.addView(tv)
-    }
 
-    private fun addMenuEmptyText(text: String) {
-        val tv = TextView(this).apply {
-            this.text = text
-            setTextColor(Color.GRAY)
-            textSize = 14f
-            setPadding(16, 0, 0, 8)
-        }
-        deviceListContainer.addView(tv)
-    }
-
-    private fun addMenuItem(mac: String, rssi: Int, isWifi: Boolean) {
-        val displayName = getDeviceCustomName(mac)
-        val isTarget = (mac == targetMacAddress)
-        val uniqueColor = getColorForMac(mac)
-        
-        val button = Button(this).apply {
-            text = if (isTarget) "🎯 $displayName (Ост: $rssi)" else "$displayName (Ост: $rssi)"
-            isAllCaps = false
-            setBackgroundColor(Color.parseColor("#333333"))
-            setTextColor(uniqueColor) 
-            setPadding(16, 16, 16, 16)
-            
-            if (isTarget) {
-                setBackgroundColor(Color.parseColor("#4CAF50"))
-                setTextColor(Color.WHITE)
+        if (bluetoothRecords.isEmpty()) {
+            val emptyTv = TextView(this).apply {
+                text = "Поки нічого не знайдено..."
+                setTextColor(Color.GRAY)
+                textSize = 14f
+                setPadding(16, 0, 0, 8)
             }
-            
-            val params = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            params.setMargins(0, 0, 0, 8)
-            layoutParams = params
-
-            setOnClickListener { showActionDialog(mac, displayName) }
+            deviceListContainer.addView(emptyTv)
         }
-        deviceListContainer.addView(button)
+
+        bluetoothRecords.forEach { (mac, record) -> 
+            val displayName = getDeviceCustomName(mac)
+            val isTarget = (mac == targetMacAddress)
+            val uniqueColor = getColorForMac(mac)
+            
+            val button = Button(this).apply {
+                text = if (isTarget) "🎯 $displayName (Ост: ${record.lastRssi})" else "$displayName (Ост: ${record.lastRssi})"
+                isAllCaps = false
+                setBackgroundColor(Color.parseColor("#333333"))
+                setTextColor(uniqueColor) 
+                setPadding(16, 16, 16, 16)
+                
+                if (isTarget) {
+                    setBackgroundColor(Color.parseColor("#4CAF50"))
+                    setTextColor(Color.WHITE)
+                }
+                
+                val params = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                params.setMargins(0, 0, 0, 8)
+                layoutParams = params
+
+                setOnClickListener { showActionDialog(mac, displayName) }
+            }
+            deviceListContainer.addView(button)
+        }
     }
 
     private fun showActionDialog(mac: String, currentName: String) {
-        val options = arrayOf("🎯 Почати пошук цього пристрою", "✏️ Перейменувати")
+        val options = arrayOf("🎯 Почати пошук", "✏️ Перейменувати")
         AlertDialog.Builder(this)
             .setTitle(currentName)
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> startSniperMode(mac, currentName)
+                    0 -> startSniperMode(mac)
                     1 -> showRenameDialog(mac, currentName)
                 }
             }
@@ -346,15 +293,14 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun startSniperMode(mac: String, name: String) {
+    private fun startSniperMode(mac: String) {
         targetMacAddress = mac
         scanProgress = 0
         lastRecordedPos = null
         rssiBuffers.clear()
         updateProgressUi()
         
-        val allRecords = wifiRecords.values + bluetoothRecords.values
-        allRecords.forEach { record ->
+        bluetoothRecords.values.forEach { record ->
             record.currentNode?.let { node ->
                 node.renderable = null
                 node.anchor?.detach()
@@ -367,25 +313,23 @@ class MainActivity : AppCompatActivity() {
         
         menuPanel.visibility = View.GONE
         resetUiTimer()
-        Toast.makeText(this, "Крокуйте по кімнаті для пошуку!", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Крокуйте по кімнаті!", Toast.LENGTH_LONG).show()
     }
 
     private fun showRenameDialog(mac: String, currentName: String) {
         val input = EditText(this).apply {
             setText(if (currentName == mac) "" else currentName)
-            hint = "Введіть нову назву"
+            hint = "Нова назва"
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Перейменувати пристрій")
-            .setMessage("MAC: $mac")
+            .setTitle("Перейменувати")
             .setView(input)
             .setPositiveButton("Зберегти") { _, _ ->
                 val newName = input.text.toString().trim()
                 if (newName.isNotEmpty()) {
                     saveDeviceCustomName(mac, newName)
                     openSettingsMenu()
-                    Toast.makeText(this, "Збережено!", Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton("Скасувати", null)
@@ -413,11 +357,8 @@ class MainActivity : AppCompatActivity() {
         uiHandler.removeCallbacks(hideUiRunnable)
     }
 
-    private fun updateSignalInAR(mac: String, rssi: Int, androidColorInt: Int, isWifiSignal: Boolean) {
-        if (isWifiSignal != isWifiMode) return
-
-        val records = if (isWifiSignal) wifiRecords else bluetoothRecords
-        val record = records[mac] ?: MainSignalRecord().also { records[mac] = it }
+    private fun updateSignalInAR(mac: String, rssi: Int, androidColorInt: Int) {
+        val record = bluetoothRecords[mac] ?: MainSignalRecord().also { bluetoothRecords[mac] = it }
         record.lastRssi = rssi
 
         val buffer = rssiBuffers[mac] ?: mutableListOf<Int>().also { rssiBuffers[mac] = it }
@@ -442,9 +383,9 @@ class MainActivity : AppCompatActivity() {
             }
 
             val baseSize = when {
-                smoothedRssi > -40 -> 0.25f  
-                smoothedRssi > -60 -> 0.12f  
-                smoothedRssi > -80 -> 0.05f  
+                smoothedRssi > -40 -> 0.15f  
+                smoothedRssi > -60 -> 0.08f  
+                smoothedRssi > -80 -> 0.04f  
                 else -> 0.02f        
             }
 
@@ -474,12 +415,7 @@ class MainActivity : AppCompatActivity() {
                             }
 
                             val shapeNode = Node()
-                            if (isWifiSignal) {
-                                val cubeSize = Vector3(baseSize * 1.5f, baseSize * 1.5f, baseSize * 1.5f)
-                                shapeNode.renderable = ShapeFactory.makeCube(cubeSize, Vector3.zero(), material)
-                            } else {
-                                shapeNode.renderable = ShapeFactory.makeSphere(baseSize, Vector3.zero(), material)
-                            }
+                            shapeNode.renderable = ShapeFactory.makeSphere(baseSize, Vector3.zero(), material)
 
                             val forward = floatArrayOf(0f, 0f, -0.5f)
                             val transformed = FloatArray(3)
@@ -501,7 +437,8 @@ class MainActivity : AppCompatActivity() {
                                 val labelNode = Node()
                                 labelNode.setParent(anchorNode)
                                 labelNode.renderable = viewRenderable
-                                labelNode.localPosition = Vector3(0f, baseSize + 0.15f, 0f)
+                                labelNode.localScale = Vector3(0.6f, 0.6f, 0.6f)
+                                labelNode.localPosition = Vector3(0f, baseSize + 0.10f, 0f)
 
                                 record.currentNode = anchorNode
                             }
@@ -510,57 +447,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setMode(wifi: Boolean) {
-        isWifiMode = wifi
-        targetMacAddress = null 
-        scanProgress = 0
-        lastRecordedPos = null
-        rssiBuffers.clear()
-        updateProgressUi()
-        
-        val inactiveRecords = if (wifi) bluetoothRecords else wifiRecords
-        inactiveRecords.values.forEach { record ->
-            record.currentNode?.let { node ->
-                node.renderable = null
-                node.anchor?.detach()
-                node.setParent(null)
-            }
-            record.currentNode = null
-            record.isLockedAt100 = false
-        }
-
-        if (isWifiMode) {
-            btnWifi.setBackgroundColor(Color.parseColor("#4CAF50"))
-            btnBluetooth.setBackgroundColor(Color.parseColor("#555555"))
-            bluetoothScanner.stopScanning()
-            wifiScanner.startScanning()
-        } else {
-            btnWifi.setBackgroundColor(Color.parseColor("#555555"))
-            btnBluetooth.setBackgroundColor(Color.parseColor("#2196F3"))
-            wifiScanner.stopScanning()
-            bluetoothScanner.startScanning()
-        }
-    }
-
-    private fun startCurrentScanner() {
-        if (isWifiMode) {
-            wifiScanner.startScanning()
-        } else {
-            bluetoothScanner.startScanning()
-        }
-    }
-
     override fun onPause() {
         super.onPause()
         uiHandler.removeCallbacks(hideUiRunnable)
-        wifiScanner.stopScanning()
         bluetoothScanner.stopScanning()
     }
 
     override fun onResume() {
         super.onResume()
         if (checkPermissions()) {
-            startCurrentScanner()
+            bluetoothScanner.startScanning()
         }
     }
 
@@ -589,7 +485,7 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE && grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            startCurrentScanner()
+            bluetoothScanner.startScanning()
         } else {
             Toast.makeText(this, "Надайте дозволи!", Toast.LENGTH_LONG).show()
         }
