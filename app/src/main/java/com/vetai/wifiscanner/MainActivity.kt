@@ -5,7 +5,12 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.View
 import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.RelativeLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -17,7 +22,6 @@ import com.google.ar.sceneform.rendering.MaterialFactory
 import com.google.ar.sceneform.rendering.ShapeFactory
 import com.google.ar.sceneform.ux.ArFragment
 
-// Тепер ми зберігаємо лише ОДИН поточний AR-вузол для кожного джерела
 data class SignalRecord(
     var currentNode: AnchorNode? = null
 )
@@ -26,6 +30,10 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnWifi: Button
     private lateinit var btnBluetooth: Button
+    private lateinit var btnExit: Button
+    private lateinit var btnSettings: Button
+    private lateinit var topControls: RelativeLayout
+    private lateinit var bottomControls: LinearLayout
     private var isWifiMode = true 
 
     private lateinit var wifiScanner: WifiSignalScanner
@@ -34,16 +42,28 @@ class MainActivity : AppCompatActivity() {
     private val PERMISSION_REQUEST_CODE = 123
     private lateinit var arFragment: ArFragment
 
-    // Окремі бази даних для Wi-Fi та Bluetooth
     private val wifiRecords = mutableMapOf<String, SignalRecord>()
     private val bluetoothRecords = mutableMapOf<String, SignalRecord>()
+
+    // Таймер для приховування інтерфейсу (5 секунд)
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val hideUiRunnable = Runnable {
+        topControls.visibility = View.GONE
+        bottomControls.visibility = View.GONE
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Прив'язка всіх кнопок і панелей
         btnWifi = findViewById(R.id.btn_wifi)
         btnBluetooth = findViewById(R.id.btn_bluetooth)
+        btnExit = findViewById(R.id.btn_exit)
+        btnSettings = findViewById(R.id.btn_settings)
+        topControls = findViewById(R.id.top_controls)
+        bottomControls = findViewById(R.id.bottom_controls)
+        
         arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
 
         wifiScanner = WifiSignalScanner(this)
@@ -60,11 +80,30 @@ class MainActivity : AppCompatActivity() {
         btnWifi.setOnClickListener {
             setMode(wifi = true)
             Toast.makeText(this, "Режим Wi-Fi", Toast.LENGTH_SHORT).show()
+            resetUiTimer()
         }
 
         btnBluetooth.setOnClickListener {
             setMode(wifi = false)
             Toast.makeText(this, "Режим Bluetooth", Toast.LENGTH_SHORT).show()
+            resetUiTimer()
+        }
+
+        // Кнопка Виходу з програми
+        btnExit.setOnClickListener {
+            finish()
+        }
+
+        // Кнопка Налаштувань (Поки що пустушка)
+        btnSettings.setOnClickListener {
+            Toast.makeText(this, "Меню в розробці...", Toast.LENGTH_SHORT).show()
+            resetUiTimer()
+        }
+
+        // Слухаємо дотики до екрану, щоб повернути кнопки
+        arFragment.arSceneView.scene.setOnTouchListener { _, _ ->
+            showUi()
+            false 
         }
 
         if (checkPermissions()) {
@@ -72,40 +111,51 @@ class MainActivity : AppCompatActivity() {
         } else {
             requestPermissions()
         }
+
+        // Запускаємо таймер одразу при старті
+        resetUiTimer()
+    }
+
+    // Функції для таймера і видимості
+    private fun showUi() {
+        topControls.visibility = View.VISIBLE
+        bottomControls.visibility = View.VISIBLE
+        resetUiTimer()
+    }
+
+    private fun resetUiTimer() {
+        uiHandler.removeCallbacks(hideUiRunnable)
+        uiHandler.postDelayed(hideUiRunnable, 5000) // 5000 мілісекунд = 5 секунд
     }
 
     private fun updateSignalInAR(mac: String, rssi: Int, colorInt: Int, isWifiSignal: Boolean) {
-        // Захист від малювання фонових сигналів іншого режиму
+        // Жорстке відсікання фонових сигналів
         if (isWifiSignal != isWifiMode) return
 
         val frame = arFragment.arSceneView.arFrame ?: return
         val records = if (isWifiSignal) wifiRecords else bluetoothRecords
         val record = records[mac] ?: SignalRecord().also { records[mac] = it }
 
-        // 1. МИТТЄВО СТИРАЄМО СТАРУ БУЛЬКУ ЦЬОГО ДЖЕРЕЛА
         record.currentNode?.let { node ->
             node.renderable = null
             node.anchor?.detach()
             node.setParent(null)
         }
 
-        // 2. ОБЧИСЛЮЄМО НОВИЙ РОЗМІР (Залежно від сили сигналу RSSI)
         val sphereRadius = when {
-            rssi > -40 -> 0.25f  // Дуже сильний сигнал (впритул) -> 25 см (величезна куля)
-            rssi > -60 -> 0.12f  // Близько -> 12 см
-            rssi > -80 -> 0.05f  // Середня відстань -> 5 см
-            else -> 0.02f        // Далеко (слабкий) -> 2 см (крихітна крапка)
+            rssi > -40 -> 0.25f  
+            rssi > -60 -> 0.12f  
+            rssi > -80 -> 0.05f  
+            else -> 0.02f        
         }
 
         val cameraPose = frame.camera.pose
         val arColor = com.google.ar.sceneform.rendering.Color(colorInt)
 
-        // 3. МАЛЮЄМО НОВУ БУЛЬКУ ПЕРЕД КАМЕРОЮ
         MaterialFactory.makeOpaqueWithColor(this, arColor)
             .thenAccept { material ->
                 val sphere = ShapeFactory.makeSphere(sphereRadius, Vector3.zero(), material)
 
-                // Ставимо маяк на 0.5м рівно перед камерою
                 val forward = floatArrayOf(0f, 0f, -0.5f)
                 val transformed = FloatArray(3)
                 cameraPose.rotateVector(forward, 0, transformed, 0)
@@ -123,7 +173,6 @@ class MainActivity : AppCompatActivity() {
                     anchorNode.renderable = sphere
                     anchorNode.setParent(arFragment.arSceneView.scene)
                     
-                    // 4. ЗАПАМ'ЯТОВУЄМО ЦЮ БУЛЬКУ, ЩОБ СТЕРТИ ЇЇ ПРИ НАСТУПНОМУ ПАКЕТІ
                     record.currentNode = anchorNode
                 }
             }
@@ -132,9 +181,13 @@ class MainActivity : AppCompatActivity() {
     private fun setMode(wifi: Boolean) {
         isWifiMode = wifi
         
-        // Приховуємо бульби неактивного режиму, показуємо активні
-        wifiRecords.values.forEach { it.currentNode?.isEnabled = isWifiMode }
-        bluetoothRecords.values.forEach { it.currentNode?.isEnabled = !isWifiMode }
+        // Жорстке відсікання: вимикаємо фізичну видимість куль іншого режиму
+        wifiRecords.values.forEach { record ->
+            record.currentNode?.isEnabled = isWifiMode 
+        }
+        bluetoothRecords.values.forEach { record ->
+            record.currentNode?.isEnabled = !isWifiMode 
+        }
 
         if (isWifiMode) {
             btnWifi.setBackgroundColor(Color.parseColor("#4CAF50"))
@@ -159,6 +212,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        uiHandler.removeCallbacks(hideUiRunnable) // Зупиняємо таймер, щоб не було витоку пам'яті
         wifiScanner.stopScanning()
         bluetoothScanner.stopScanning()
     }
