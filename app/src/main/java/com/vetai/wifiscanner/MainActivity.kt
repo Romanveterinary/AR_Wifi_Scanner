@@ -26,7 +26,8 @@ import com.google.ar.sceneform.ux.ArFragment
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-data class SignalRecord(
+// Перейменовано на MainSignalRecord для уникнення конфліктів у пакеті
+data class MainSignalRecord(
     var currentNode: AnchorNode? = null,
     var lastRssi: Int = -100,
     var maxRssi: Int = -100,
@@ -62,8 +63,8 @@ class MainActivity : AppCompatActivity() {
     private val PERMISSION_REQUEST_CODE = 123
     private lateinit var arFragment: ArFragment
 
-    private val wifiRecords = mutableMapOf<String, SignalRecord>()
-    private val bluetoothRecords = mutableMapOf<String, SignalRecord>()
+    private val wifiRecords = mutableMapOf<String, MainSignalRecord>()
+    private val bluetoothRecords = mutableMapOf<String, MainSignalRecord>()
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private val hideUiRunnable = Runnable {
@@ -408,11 +409,16 @@ class MainActivity : AppCompatActivity() {
         uiHandler.postDelayed(hideUiRunnable, 5000)
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        uiHandler.removeCallbacks(hideUiRunnable)
+    }
+
     private fun updateSignalInAR(mac: String, rssi: Int, androidColorInt: Int, isWifiSignal: Boolean) {
         if (isWifiSignal != isWifiMode) return
 
         val records = if (isWifiSignal) wifiRecords else bluetoothRecords
-        val record = records[mac] ?: SignalRecord().also { records[mac] = it }
+        val record = records[mac] ?: MainSignalRecord().also { records[mac] = it }
         record.lastRssi = rssi
 
         val buffer = rssiBuffers[mac] ?: mutableListOf<Int>().also { rssiBuffers[mac] = it }
@@ -468,7 +474,6 @@ class MainActivity : AppCompatActivity() {
                                 textView.text = "$deviceName\nПік: $smoothedRssi"
                             }
 
-                            // РОЗПОДІЛ ФІГУР: Кубик для Wi-Fi, Кулька для Bluetooth
                             val shapeNode = Node()
                             if (isWifiSignal) {
                                 val cubeSize = Vector3(baseSize * 1.5f, baseSize * 1.5f, baseSize * 1.5f)
