@@ -96,17 +96,24 @@ class MainActivity : AppCompatActivity() {
             wifiScanner = WifiSignalScanner(this)
             bluetoothScanner = BluetoothSignalScanner(this)
 
-            wifiScanner.onSignalFound = { mac, _, rssi, color ->
-                runOnUiThread { updateSignalInAR(mac, rssi, color, isWifiSignal = true) }
+            // ІГНОРУЄМО КОЛІР ВІД СКАНЕРА, ГЕНЕРУЄМО СВІЙ УНІКАЛЬНИЙ В MainActivity
+            wifiScanner.onSignalFound = { mac, _, rssi, _ ->
+                runOnUiThread { 
+                    val uniqueColor = generateColorFromMac(mac)
+                    updateSignalInAR(mac, rssi, uniqueColor, isWifiSignal = true) 
+                }
             }
 
-            bluetoothScanner.onSignalFound = { mac, _, rssi, color ->
-                runOnUiThread { updateSignalInAR(mac, rssi, color, isWifiSignal = false) }
+            bluetoothScanner.onSignalFound = { mac, _, rssi, _ ->
+                runOnUiThread { 
+                    val uniqueColor = generateColorFromMac(mac)
+                    updateSignalInAR(mac, rssi, uniqueColor, isWifiSignal = false) 
+                }
             }
 
             btnWifi.setOnClickListener {
                 setMode(wifi = true)
-                Toast.makeText(this, "Режим Wi-Fi", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Режим Wi-Fi (Фільтр < -70dBm)", Toast.LENGTH_SHORT).show()
                 resetUiTimer()
             }
 
@@ -132,7 +139,6 @@ class MainActivity : AppCompatActivity() {
                 resetUiTimer()
             }
 
-            // ВИПРАВЛЕННЯ КРАШУ: Даємо рушію 500мс на завантаження, перш ніж чіпляти слухача
             uiHandler.postDelayed({
                 try {
                     arFragment.arSceneView?.scene?.addOnUpdateListener { _ ->
@@ -162,10 +168,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // НОВИЙ АЛГОРИТМ: ГЕНЕРАЦІЯ УНІКАЛЬНОГО КОЛЬОРУ З MAC-АДРЕСИ
+    private fun generateColorFromMac(mac: String): Int {
+        // Беремо хеш-код адреси, робимо його позитивним і нормалізуємо до колірного кола (0-360)
+        val hue = (mac.hashCode().toDouble() % 360 + 360) % 360
+        // Повертаємо яскравий, насичений колір
+        return Color.HSVToColor(floatArrayOf(hue.toFloat(), 0.9f, 0.9f))
+    }
+
     private fun trackUserMovementIndependent() {
         if (targetMacAddress == null || scanProgress >= 100) return
         
-        // БЕЗПЕЧНИЙ ВИКЛИК (?): Якщо камера ще не готова, просто ігноруємо
         val frame = arFragment.arSceneView?.arFrame ?: return
         if (frame.camera.trackingState != com.google.ar.core.TrackingState.TRACKING) return
         
@@ -252,6 +265,7 @@ class MainActivity : AppCompatActivity() {
 
         addMenuHeader("🌐 Wi-Fi Пристрої:")
         if (wifiRecords.isEmpty()) addMenuEmptyText("Поки нічого не знайдено...")
+        // У меню також підсвічуємо MAC унікальним кольором
         wifiRecords.forEach { (mac, record) -> addMenuItem(mac, record.lastRssi, true) }
 
         addMenuHeader("\n🔵 Bluetooth Пристрої:")
@@ -282,14 +296,21 @@ class MainActivity : AppCompatActivity() {
     private fun addMenuItem(mac: String, rssi: Int, isWifi: Boolean) {
         val displayName = getDeviceCustomName(mac)
         val isTarget = (mac == targetMacAddress)
-        val bgColor = if (isTarget) "#4CAF50" else "#333333"
+        val uniqueColor = generateColorFromMac(mac)
         
         val button = Button(this).apply {
+            // Відображаємо кольоровий індикатор BSSID в меню
             text = if (isTarget) "🎯 $displayName (Ост: $rssi)" else "$displayName (Ост: $rssi)"
             isAllCaps = false
-            setBackgroundColor(Color.parseColor(bgColor))
-            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#333333")) // Фон темний
+            setTextColor(uniqueColor) // Текст підсвічуємо унікальним кольором
             setPadding(16, 16, 16, 16)
+            
+            // Якщо це ціль, робимо яскраву обводку
+            if (isTarget) {
+                setBackgroundColor(Color.parseColor("#4CAF50"))
+                setTextColor(Color.WHITE)
+            }
             
             val params = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -391,7 +412,9 @@ class MainActivity : AppCompatActivity() {
         if (buffer.size > 3) buffer.removeAt(0)
         val smoothedRssi = buffer.average().toInt()
 
-        // БЕЗПЕЧНИЙ ВИКЛИК (?): Захист від падіння
+        // ФІЛЬТР ШУМУ (-70 dBm): Не малюємо сусідські роутери в режимі Радара
+        if (targetMacAddress == null && isWifiSignal && smoothedRssi < -70) return
+
         val frame = arFragment.arSceneView?.arFrame ?: return
         val posArray = frame.camera.pose.translation
         val isTarget = (targetMacAddress == mac)
@@ -416,7 +439,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             val cameraPose = frame.camera.pose
-            val arColor = com.google.ar.sceneform.rendering.Color(colorInt)
+            val arColor = com.google.ar.sceneform.rendering.Color(colorInt) // ВИКОРИСТОВУЄМО УНІКАЛЬНИЙ КОЛІР ХЕШУ
             val deviceName = getDeviceCustomName(mac)
 
             MaterialFactory.makeOpaqueWithColor(this, arColor)
@@ -447,7 +470,6 @@ class MainActivity : AppCompatActivity() {
                                 posArray[2] + transformed[2]
                             )
 
-                            // БЕЗПЕЧНИЙ ВИКЛИК (?): Захист від падіння
                             val anchor = arFragment.arSceneView?.session?.createAnchor(anchorPose)
                             anchor?.let {
                                 val anchorNode = AnchorNode(it)
