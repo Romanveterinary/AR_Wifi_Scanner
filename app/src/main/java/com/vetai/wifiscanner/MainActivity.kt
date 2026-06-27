@@ -26,13 +26,11 @@ import com.google.ar.sceneform.ux.ArFragment
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-// ОНОВЛЕНО: Додано час останнього піку та посилання на текст для динамічного оновлення
 data class MainSignalRecord(
     var currentNode: AnchorNode? = null,
     var labelView: ViewRenderable? = null, 
     var lastRssi: Int = -100,
     var maxRssi: Int = -100,
-    var lastPeakTime: Long = 0,
     var isLockedAt100: Boolean = false 
 )
 
@@ -229,11 +227,9 @@ class MainActivity : AppCompatActivity() {
                     bluetoothRecords.values.forEach { 
                         it.isLockedAt100 = false
                         it.maxRssi = -100 
-                        it.lastPeakTime = 0
                     }
                     updateProgressUi()
                     
-                    // ВИМИКАЄМО АПАРАТНИЙ ФІЛЬТР (Повертаємось до загального сканування)
                     bluetoothScanner.startScanning(null)
                     openSettingsMenu()
                 }
@@ -310,24 +306,30 @@ class MainActivity : AppCompatActivity() {
         rssiBuffers.clear()
         updateProgressUi()
         
+        // ЖОРСТКЕ ОЧИЩЕННЯ: Видаляємо з екрану всі інші пристрої
+        val targetRecord = bluetoothRecords[mac]
         bluetoothRecords.values.forEach { record ->
             record.currentNode?.let { node ->
                 node.renderable = null
                 node.anchor?.detach()
                 node.setParent(null)
             }
-            record.currentNode = null
-            record.maxRssi = -100 
-            record.lastPeakTime = 0
-            record.isLockedAt100 = false
+        }
+        bluetoothRecords.clear()
+        
+        // Залишаємо лише нашу ціль у пам'яті
+        if (targetRecord != null) {
+            targetRecord.currentNode = null
+            targetRecord.maxRssi = -100 
+            targetRecord.isLockedAt100 = false
+            bluetoothRecords[mac] = targetRecord
         }
         
-        // ВМИКАЄМО АПАРАТНИЙ ФІЛЬТР (Слухаємо тільки цей MAC 10 разів на секунду)
         bluetoothScanner.startScanning(mac)
         
         menuPanel.visibility = View.GONE
         resetUiTimer()
-        Toast.makeText(this, "Снайперський режим увімкнено! Крокуйте.", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Снайперський режим! Шукаємо абсолютний максимум.", Toast.LENGTH_LONG).show()
     }
 
     private fun showRenameDialog(mac: String, currentName: String) {
@@ -388,20 +390,9 @@ class MainActivity : AppCompatActivity() {
         if (targetMacAddress != null && !isTarget) return
         if (record.isLockedAt100) return
 
-        val currentTime = System.currentTimeMillis()
-
-        // ДИНАМІЧНИЙ ТРЕКІНГ (ВІДЛІПЛЮВАННЯ БУЛЬКИ)
-        // Якщо пройшло 3 секунди з останнього піку, ми штучно знижуємо збережений пік.
-        // Це дозволяє AR-бульці переміститися вслід за ціллю, що рухається.
-        if (currentTime - record.lastPeakTime > 3000 && record.maxRssi > -90) {
-            record.maxRssi -= 3 
-            record.lastPeakTime = currentTime
-        }
-
-        // Якщо сигнал сильніший (або дорівнює) піку — малюємо нову бульку
-        if (smoothedRssi >= record.maxRssi || record.currentNode == null) {
+        // АБСОЛЮТНИЙ PEAK HOLD: Булька перестрибує ТІЛЬКИ якщо знайдено новий рекорд сигналу
+        if (smoothedRssi > record.maxRssi || record.currentNode == null) {
             record.maxRssi = smoothedRssi
-            record.lastPeakTime = currentTime
 
             record.currentNode?.let { node ->
                 node.renderable = null
@@ -430,15 +421,15 @@ class MainActivity : AppCompatActivity() {
                         .build()
                         .thenAccept { viewRenderable ->
                             
-                            record.labelView = viewRenderable // Зберігаємо для оновлення в реальному часі
+                            record.labelView = viewRenderable 
                             val textView = viewRenderable.view.findViewById<TextView>(R.id.tv_ar_label)
                             
                             if (isTarget && scanProgress >= 100) {
-                                textView.text = "🎯 ЦІЛЬ ТУТ\n($deviceName)\nСигнал: $smoothedRssi"
+                                textView.text = "🎯 ЦІЛЬ ТУТ\n($deviceName)\nМаксимум: $smoothedRssi"
                                 textView.setTextColor(Color.YELLOW)
                                 record.isLockedAt100 = true 
                             } else {
-                                textView.text = "$deviceName\nСигнал: $smoothedRssi"
+                                textView.text = "$deviceName\nМаксимум: $smoothedRssi"
                             }
 
                             val shapeNode = Node()
@@ -472,12 +463,12 @@ class MainActivity : AppCompatActivity() {
                         }
                 }
         } else {
-            // Якщо сигнал слабший за пік (булька стоїть на місці) — просто оновлюємо текст животго сигналу
+            // Якщо сигнал слабший за історичний рекорд — булька стоїть на місці, ми просто оновлюємо текст (моніторинг)
             record.labelView?.view?.findViewById<TextView>(R.id.tv_ar_label)?.apply {
                 if (isTarget && scanProgress >= 100) {
-                    text = "🎯 ЦІЛЬ ТУТ\n($deviceName)\nСигнал: $smoothedRssi"
+                    text = "🎯 ЦІЛЬ ТУТ\n($deviceName)\nМакс: ${record.maxRssi} | Зараз: $smoothedRssi"
                 } else {
-                    text = "$deviceName\nСигнал: $smoothedRssi"
+                    text = "$deviceName\nМакс: ${record.maxRssi} | Зараз: $smoothedRssi"
                 }
             }
         }
