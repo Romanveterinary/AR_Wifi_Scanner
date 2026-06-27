@@ -26,10 +26,13 @@ import com.google.ar.sceneform.ux.ArFragment
 import kotlin.math.abs
 import kotlin.math.sqrt
 
+// ОНОВЛЕНО: Додано час останнього піку та посилання на текст для динамічного оновлення
 data class MainSignalRecord(
     var currentNode: AnchorNode? = null,
+    var labelView: ViewRenderable? = null, 
     var lastRssi: Int = -100,
     var maxRssi: Int = -100,
+    var lastPeakTime: Long = 0,
     var isLockedAt100: Boolean = false 
 )
 
@@ -124,7 +127,7 @@ class MainActivity : AppCompatActivity() {
             }, 500)
 
             if (checkPermissions()) {
-                bluetoothScanner.startScanning()
+                bluetoothScanner.startScanning(targetMacAddress)
             } else {
                 requestPermissions()
             }
@@ -223,8 +226,15 @@ class MainActivity : AppCompatActivity() {
                     lastRecordedPos = null
                     rssiBuffers.clear()
                     
-                    bluetoothRecords.values.forEach { it.isLockedAt100 = false; it.maxRssi = -100 }
+                    bluetoothRecords.values.forEach { 
+                        it.isLockedAt100 = false
+                        it.maxRssi = -100 
+                        it.lastPeakTime = 0
+                    }
                     updateProgressUi()
+                    
+                    // ВИМИКАЄМО АПАРАТНИЙ ФІЛЬТР (Повертаємось до загального сканування)
+                    bluetoothScanner.startScanning(null)
                     openSettingsMenu()
                 }
             }
@@ -308,12 +318,16 @@ class MainActivity : AppCompatActivity() {
             }
             record.currentNode = null
             record.maxRssi = -100 
+            record.lastPeakTime = 0
             record.isLockedAt100 = false
         }
         
+        // ВМИКАЄМО АПАРАТНИЙ ФІЛЬТР (Слухаємо тільки цей MAC 10 разів на секунду)
+        bluetoothScanner.startScanning(mac)
+        
         menuPanel.visibility = View.GONE
         resetUiTimer()
-        Toast.makeText(this, "Крокуйте по кімнаті!", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Снайперський режим увімкнено! Крокуйте.", Toast.LENGTH_LONG).show()
     }
 
     private fun showRenameDialog(mac: String, currentName: String) {
@@ -369,12 +383,25 @@ class MainActivity : AppCompatActivity() {
         val frame = arFragment.arSceneView?.arFrame ?: return
         val posArray = frame.camera.pose.translation
         val isTarget = (targetMacAddress == mac)
+        val deviceName = getDeviceCustomName(mac)
 
         if (targetMacAddress != null && !isTarget) return
         if (record.isLockedAt100) return
 
+        val currentTime = System.currentTimeMillis()
+
+        // ДИНАМІЧНИЙ ТРЕКІНГ (ВІДЛІПЛЮВАННЯ БУЛЬКИ)
+        // Якщо пройшло 3 секунди з останнього піку, ми штучно знижуємо збережений пік.
+        // Це дозволяє AR-бульці переміститися вслід за ціллю, що рухається.
+        if (currentTime - record.lastPeakTime > 3000 && record.maxRssi > -90) {
+            record.maxRssi -= 3 
+            record.lastPeakTime = currentTime
+        }
+
+        // Якщо сигнал сильніший (або дорівнює) піку — малюємо нову бульку
         if (smoothedRssi >= record.maxRssi || record.currentNode == null) {
             record.maxRssi = smoothedRssi
+            record.lastPeakTime = currentTime
 
             record.currentNode?.let { node ->
                 node.renderable = null
@@ -390,7 +417,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             val cameraPose = frame.camera.pose
-            val deviceName = getDeviceCustomName(mac)
             
             val r = Color.red(androidColorInt) / 255f
             val g = Color.green(androidColorInt) / 255f
@@ -404,14 +430,15 @@ class MainActivity : AppCompatActivity() {
                         .build()
                         .thenAccept { viewRenderable ->
                             
+                            record.labelView = viewRenderable // Зберігаємо для оновлення в реальному часі
                             val textView = viewRenderable.view.findViewById<TextView>(R.id.tv_ar_label)
                             
                             if (isTarget && scanProgress >= 100) {
-                                textView.text = "🎯 ЦІЛЬ ТУТ\n($deviceName)"
+                                textView.text = "🎯 ЦІЛЬ ТУТ\n($deviceName)\nСигнал: $smoothedRssi"
                                 textView.setTextColor(Color.YELLOW)
                                 record.isLockedAt100 = true 
                             } else {
-                                textView.text = "$deviceName\nПік: $smoothedRssi"
+                                textView.text = "$deviceName\nСигнал: $smoothedRssi"
                             }
 
                             val shapeNode = Node()
@@ -444,6 +471,15 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                 }
+        } else {
+            // Якщо сигнал слабший за пік (булька стоїть на місці) — просто оновлюємо текст животго сигналу
+            record.labelView?.view?.findViewById<TextView>(R.id.tv_ar_label)?.apply {
+                if (isTarget && scanProgress >= 100) {
+                    text = "🎯 ЦІЛЬ ТУТ\n($deviceName)\nСигнал: $smoothedRssi"
+                } else {
+                    text = "$deviceName\nСигнал: $smoothedRssi"
+                }
+            }
         }
     }
 
@@ -456,7 +492,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (checkPermissions()) {
-            bluetoothScanner.startScanning()
+            bluetoothScanner.startScanning(targetMacAddress)
         }
     }
 
@@ -485,7 +521,7 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE && grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            bluetoothScanner.startScanning()
+            bluetoothScanner.startScanning(targetMacAddress)
         } else {
             Toast.makeText(this, "Надайте дозволи!", Toast.LENGTH_LONG).show()
         }
