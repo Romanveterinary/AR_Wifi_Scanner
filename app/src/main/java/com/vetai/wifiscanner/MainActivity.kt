@@ -46,10 +46,15 @@ class MainActivity : AppCompatActivity() {
     
     private lateinit var tvProgressText: TextView
     private lateinit var scanProgressBar: ProgressBar
+
+    // Нові змінні для фільтрації
+    private lateinit var tvFilterLabel: TextView
+    private lateinit var sbRssiFilter: SeekBar
+    private var currentRssiThreshold = -100
     
     private var targetMacAddress: String? = null
     private var scanProgress = 0
-    private var lastRecordedPos: Vector3? = null
+    private var lastRecordedPos = null
 
     private val rssiBuffers = mutableMapOf<String, MutableList<Int>>()
     private lateinit var bluetoothScanner: BluetoothSignalScanner
@@ -86,14 +91,38 @@ class MainActivity : AppCompatActivity() {
             
             tvProgressText = findViewById(R.id.tv_progress_text)
             scanProgressBar = findViewById(R.id.scan_progress_bar)
+
+            // Ініціалізація елементів фільтра
+            tvFilterLabel = findViewById(R.id.tv_filter_label)
+            sbRssiFilter = findViewById(R.id.sb_rssi_filter)
+
+            // Завантаження збереженого порогу чутливості
+            val prefs = getSharedPreferences("SavedDeviceNames", Context.MODE_PRIVATE)
+            currentRssiThreshold = prefs.getInt("rssi_threshold", -100)
+            sbRssiFilter.progress = currentRssiThreshold + 100
+            updateFilterLabelText()
+
+            sbRssiFilter.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    currentRssiThreshold = progress - 100
+                    updateFilterLabelText()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    prefs.edit().putInt("rssi_threshold", currentRssiThreshold).apply()
+                }
+            })
             
             arFragment = supportFragmentManager.findFragmentById(R.id.ar_fragment) as ArFragment
             bluetoothScanner = BluetoothSignalScanner(this)
 
             bluetoothScanner.onSignalFound = { mac, _, rssi, _ ->
-                runOnUiThread { 
-                    val uniqueColor = getColorForMac(mac)
-                    updateSignalInAR(mac, rssi, uniqueColor) 
+                // ГОЛОВНИЙ ФІЛЬТР: ігноруємо пристрої зі слабким сигналом
+                if (rssi >= currentRssiThreshold) {
+                    runOnUiThread { 
+                        val uniqueColor = getColorForMac(mac)
+                        updateSignalInAR(mac, rssi, uniqueColor) 
+                    }
                 }
             }
 
@@ -143,6 +172,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateFilterLabelText() {
+        if (currentRssiThreshold == -100) {
+            tvFilterLabel.text = "Фільтр чутливості: -100 dBm (Всі пристрої)"
+        } else {
+            tvFilterLabel.text = "Фільтр чутливості: $currentRssiThreshold dBm (Ближні пристрої)"
+        }
+    }
+
     private fun getColorForMac(mac: String): Int {
         val index = abs(mac.hashCode()) % colorPalette.size
         return colorPalette[index]
@@ -160,9 +197,9 @@ class MainActivity : AppCompatActivity() {
         if (lastRecordedPos == null) {
             lastRecordedPos = currentCamPos
         } else {
-            val dx = currentCamPos.x - lastRecordedPos!!.x
-            val dy = currentCamPos.y - lastRecordedPos!!.y
-            val dz = currentCamPos.z - lastRecordedPos!!.z
+            val dx = currentCamPos.x - (lastRecordedPos as Vector3).x
+            val dy = currentCamPos.y - (lastRecordedPos as Vector3).y
+            val dz = currentCamPos.z - (lastRecordedPos as Vector3).z
             val distanceWalked = sqrt((dx*dx + dy*dy + dz*dz).toDouble()).toFloat()
             
             if (distanceWalked > 0.6f) {
@@ -306,7 +343,6 @@ class MainActivity : AppCompatActivity() {
         rssiBuffers.clear()
         updateProgressUi()
         
-        // ЖОРСТКЕ ОЧИЩЕННЯ: Видаляємо з екрану всі інші пристрої
         val targetRecord = bluetoothRecords[mac]
         bluetoothRecords.values.forEach { record ->
             record.currentNode?.let { node ->
@@ -317,7 +353,6 @@ class MainActivity : AppCompatActivity() {
         }
         bluetoothRecords.clear()
         
-        // Залишаємо лише нашу ціль у пам'яті
         if (targetRecord != null) {
             targetRecord.currentNode = null
             targetRecord.maxRssi = -100 
@@ -390,7 +425,6 @@ class MainActivity : AppCompatActivity() {
         if (targetMacAddress != null && !isTarget) return
         if (record.isLockedAt100) return
 
-        // АБСОЛЮТНИЙ PEAK HOLD: Булька перестрибує ТІЛЬКИ якщо знайдено новий рекорд сигналу
         if (smoothedRssi > record.maxRssi || record.currentNode == null) {
             record.maxRssi = smoothedRssi
 
@@ -404,7 +438,7 @@ class MainActivity : AppCompatActivity() {
                 smoothedRssi > -40 -> 0.15f  
                 smoothedRssi > -60 -> 0.08f  
                 smoothedRssi > -80 -> 0.04f  
-                else -> 0.02f        
+                else -> 0.02f            
             }
 
             val cameraPose = frame.camera.pose
@@ -463,7 +497,6 @@ class MainActivity : AppCompatActivity() {
                         }
                 }
         } else {
-            // Якщо сигнал слабший за історичний рекорд — булька стоїть на місці, ми просто оновлюємо текст (моніторинг)
             record.labelView?.view?.findViewById<TextView>(R.id.tv_ar_label)?.apply {
                 if (isTarget && scanProgress >= 100) {
                     text = "🎯 ЦІЛЬ ТУТ\n($deviceName)\nМакс: ${record.maxRssi} | Зараз: $smoothedRssi"
