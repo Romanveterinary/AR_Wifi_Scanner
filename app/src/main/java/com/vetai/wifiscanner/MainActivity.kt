@@ -54,7 +54,7 @@ class MainActivity : AppCompatActivity() {
     
     private var targetMacAddress: String? = null
     private var scanProgress = 0
-    private var lastRecordedPos = null
+    private var lastRecordedPos: Vector3? = null
 
     private val rssiBuffers = mutableMapOf<String, MutableList<Int>>()
     private lateinit var bluetoothScanner: BluetoothSignalScanner
@@ -92,11 +92,9 @@ class MainActivity : AppCompatActivity() {
             tvProgressText = findViewById(R.id.tv_progress_text)
             scanProgressBar = findViewById(R.id.scan_progress_bar)
 
-            // Ініціалізація елементів фільтра
             tvFilterLabel = findViewById(R.id.tv_filter_label)
             sbRssiFilter = findViewById(R.id.sb_rssi_filter)
 
-            // Завантаження збереженого порогу чутливості
             val prefs = getSharedPreferences("SavedDeviceNames", Context.MODE_PRIVATE)
             currentRssiThreshold = prefs.getInt("rssi_threshold", -100)
             sbRssiFilter.progress = currentRssiThreshold + 100
@@ -117,7 +115,6 @@ class MainActivity : AppCompatActivity() {
             bluetoothScanner = BluetoothSignalScanner(this)
 
             bluetoothScanner.onSignalFound = { mac, _, rssi, _ ->
-                // ГОЛОВНИЙ ФІЛЬТР: ігноруємо пристрої зі слабким сигналом
                 if (rssi >= currentRssiThreshold) {
                     runOnUiThread { 
                         val uniqueColor = getColorForMac(mac)
@@ -197,9 +194,9 @@ class MainActivity : AppCompatActivity() {
         if (lastRecordedPos == null) {
             lastRecordedPos = currentCamPos
         } else {
-            val dx = currentCamPos.x - (lastRecordedPos as Vector3).x
-            val dy = currentCamPos.y - (lastRecordedPos as Vector3).y
-            val dz = currentCamPos.z - (lastRecordedPos as Vector3).z
+            val dx = currentCamPos.x - lastRecordedPos!!.x
+            val dy = currentCamPos.y - lastRecordedPos!!.y
+            val dz = currentCamPos.z - lastRecordedPos!!.z
             val distanceWalked = sqrt((dx*dx + dy*dy + dz*dz).toDouble()).toFloat()
             
             if (distanceWalked > 0.6f) {
@@ -546,8 +543,6 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE && grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             bluetoothScanner.startScanning(targetMacAddress)
-        } else {
-            Toast.makeText(this, "Надайте дозволи!", Toast.LENGTH_LONG).show()
         }
     }
 }
