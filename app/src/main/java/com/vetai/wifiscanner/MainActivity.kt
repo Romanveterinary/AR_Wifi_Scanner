@@ -47,10 +47,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvProgressText: TextView
     private lateinit var scanProgressBar: ProgressBar
 
-    // Нові змінні для фільтрації
     private lateinit var tvFilterLabel: TextView
     private lateinit var sbRssiFilter: SeekBar
+    private lateinit var swTwsMode: Switch
+    
     private var currentRssiThreshold = -100
+    private var isTwsMode = false
     
     private var targetMacAddress: String? = null
     private var scanProgress = 0
@@ -94,11 +96,21 @@ class MainActivity : AppCompatActivity() {
 
             tvFilterLabel = findViewById(R.id.tv_filter_label)
             sbRssiFilter = findViewById(R.id.sb_rssi_filter)
+            swTwsMode = findViewById(R.id.sw_tws_mode)
 
             val prefs = getSharedPreferences("SavedDeviceNames", Context.MODE_PRIVATE)
             currentRssiThreshold = prefs.getInt("rssi_threshold", -100)
             sbRssiFilter.progress = currentRssiThreshold + 100
             updateFilterLabelText()
+
+            isTwsMode = prefs.getBoolean("tws_mode", false)
+            swTwsMode.isChecked = isTwsMode
+
+            swTwsMode.setOnCheckedChangeListener { _, isChecked ->
+                isTwsMode = isChecked
+                prefs.edit().putBoolean("tws_mode", isTwsMode).apply()
+                rssiBuffers.clear() 
+            }
 
             sbRssiFilter.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -411,8 +423,21 @@ class MainActivity : AppCompatActivity() {
 
         val buffer = rssiBuffers[mac] ?: mutableListOf<Int>().also { rssiBuffers[mac] = it }
         buffer.add(rssi)
-        if (buffer.size > 3) buffer.removeAt(0)
-        val smoothedRssi = buffer.average().toInt()
+        
+        val bufferLimit = if (isTwsMode) 15 else 3
+        while (buffer.size > bufferLimit) {
+            buffer.removeAt(0)
+        }
+        
+        val smoothedRssi = if (isTwsMode) {
+            if (buffer.size >= 5) {
+                buffer.sorted().takeLast(5).average().toInt()
+            } else {
+                buffer.maxOrNull() ?: rssi
+            }
+        } else {
+            buffer.average().toInt()
+        }
 
         val frame = arFragment.arSceneView?.arFrame ?: return
         val posArray = frame.camera.pose.translation
