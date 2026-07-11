@@ -49,6 +49,24 @@
         android:visibility="gone">
 
         <TextView
+            android:id="@+id/tv_filter_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Фільтр чутливості: -100 dBm (Всі пристрої)"
+            android:textColor="#FFEB3B"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sb_rssi_filter"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="70"
+            android:progress="0"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="8dp"
